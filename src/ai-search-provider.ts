@@ -41,6 +41,11 @@ function normalizeBaseUrl(url: string): string {
     return url.replace(/\/+$/, '');
 }
 
+function ensureOpenAiBaseUrl(url: string): string {
+    const normalized = normalizeBaseUrl(url);
+    return normalized.endsWith('/v1') ? normalized : `${normalized}/v1`;
+}
+
 function parsePositiveInt(value: string | undefined, fallback: number): number {
     if (!value) return fallback;
     const parsed = Number.parseInt(value, 10);
@@ -259,6 +264,7 @@ async function fetchOpenAiResponse(
         throw new Error('OpenAI-compatible provider is missing baseUrl or model.');
     }
 
+    const baseUrl = ensureOpenAiBaseUrl(config.baseUrl);
     const body = {
         model: config.model,
         temperature: 0.2,
@@ -276,7 +282,7 @@ async function fetchOpenAiResponse(
         headers.Authorization = `Bearer ${config.apiKey}`;
     }
 
-    const response = await fetch(`${config.baseUrl}/chat/completions`, {
+    const response = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers,
         body: JSON.stringify(body),
@@ -294,8 +300,17 @@ async function fetchOpenAiResponse(
         throw new Error(`OpenAI-compatible response was not JSON: ${payloadText}`);
     }
 
+    if (payload?.error) {
+        const message = typeof payload.error === 'string' ? payload.error : payload.error?.message;
+        throw new Error(`OpenAI-compatible response error: ${message ?? payloadText}`);
+    }
+
     const content = payload?.choices?.[0]?.message?.content;
     if (typeof content !== 'string' || !content.trim()) {
+        const fallback = payload?.choices?.[0]?.text;
+        if (typeof fallback === 'string' && fallback.trim()) {
+            return fallback.trim();
+        }
         throw new Error('OpenAI-compatible response missing message content.');
     }
 
