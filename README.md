@@ -138,6 +138,7 @@ Configure behavior via environment variables. Important options:
 - Set `MCP_EMBEDDING_PROVIDER=openai` and `MCP_EMBEDDING_BASE_URL=http://127.0.0.1:1234`.
 - Add a document and run `search_documents` to confirm embeddings are generated via LM Studio.
 - Re-ingest documents when switching embedding provider or model.
+- Or run the CLI check: `node dist/embedding-cli.js --provider openai --base-url http://127.0.0.1:1234 --model text-embedding-nomic-embed-text-v1.5`.
 
 Example `.env` (defaults applied when variables are not set):
 
