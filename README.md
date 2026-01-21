@@ -86,11 +86,15 @@ The server exposes several tools (validated with Zod schemas) for document lifec
 - `list_documents` — List stored documents and metadata
 - `get_document` — Retrieve a full document by id
 - `delete_document` — Remove a document, its chunks, and associated original files
+- `delete_crawl_session` — Remove all documents created by a crawl session
 
 ### 📁 File Processing
 - `process_uploads` — Convert files in uploads folder into documents (chunking + embeddings + backup preservation)
 - `get_uploads_path` — Returns the absolute uploads folder path
 - `list_uploads_files` — Lists files in uploads folder
+
+### 🧭 Documentation Crawling
+- `crawl_documentation` — Crawl public docs from a seed URL with depth/page limits and robots.txt compliance
 
 ### 🔍 Search & Intelligence
 - `search_documents_with_ai` — **🤖 AI-powered search using the configured provider** for advanced document analysis (requires provider configuration)
@@ -101,7 +105,7 @@ The server exposes several tools (validated with Zod schemas) for document lifec
 
 Configure behavior via environment variables. Important options:
 
-- `MCP_BASE_DIR` — base directory for data storage (default: `~/.mcp-documentation-server`). Set this to use independent workspaces.
+- `MCP_BASE_DIR` — base directory for data storage (default: `~/.mcp-documentation-server`). Supports `~` expansion for the home directory.
 - `MCP_EMBEDDING_PROVIDER` — embedding provider selection: `transformers` or `openai` (optional; defaults to `transformers`).
 - `MCP_EMBEDDING_MODEL` — embedding model name. Defaults to `Xenova/all-MiniLM-L6-v2` for Transformers.js or `text-embedding-nomic-embed-text-v1.5` for LM Studio.
 - `MCP_EMBEDDING_BASE_URL` — OpenAI-compatible embeddings base URL (required for `openai`, e.g. `http://127.0.0.1:1234`).
@@ -200,6 +204,34 @@ Search a document:
     "document_id": "doc-123",
     "query": "variable assignment",
     "limit": 5
+  }
+}
+```
+
+### Crawl Documentation
+
+The crawler ingests public documentation starting from a seed URL, respects `robots.txt`, and uses sitemaps when available.
+Crawled content is untrusted; review and sanitize before using it in prompts or responses.
+
+```json
+{
+  "tool": "crawl_documentation",
+  "arguments": {
+    "seed_url": "https://example.com/docs",
+    "max_pages": 100,
+    "max_depth": 5,
+    "same_domain_only": true
+  }
+}
+```
+
+To remove a crawl session later:
+
+```json
+{
+  "tool": "delete_crawl_session",
+  "arguments": {
+    "crawl_id": "your-crawl-id"
   }
 }
 ```
