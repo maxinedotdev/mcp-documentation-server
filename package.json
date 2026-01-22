@@ -25,6 +25,7 @@
     "embeddings:check": "node dist/embedding-cli.js",
     "inspect": "npx fastmcp inspect src/server.ts",
     "promote:staging": "./promote-to-staging.sh",
+    "promote:staging:push": "./promote-to-staging.sh --push",
     "switch:develop": "./switch-to-develop.sh",
     "test": "echo \"Warning: no test specified\" && exit 0",
     "test:unit": "tsx src/vector-db/__tests__/vector-db.test.ts",

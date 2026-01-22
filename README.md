@@ -408,7 +408,7 @@ npm run inspect
 
 ### Branch conventions (local)
 - `develop` is the active integration branch
-- `staging` is the runtime branch; promote by merging `develop` via `./promote-to-staging.sh` (use `--push` to publish, or `npm run promote:staging`)
+- `staging` is the runtime branch; promote by merging `develop` via `./promote-to-staging.sh` (auto-stashes/restores local changes; use `--push` or `npm run promote:staging:push` to publish)
 - `main` tracks upstream and should remain clean locally
 - Switch back to the dev worktree with `./switch-to-develop.sh` or `npm run switch:develop` (auto-stashes/restores local changes)
 
