@@ -1,20 +1,20 @@
 {
-  "name": "@maxinedotdev/mcp-documentation-server",
-  "version": "1.12.0",
+  "name": "@maxinedotdev/saga",
+  "version": "0.1.0",
   "description": "A TypeScript MCP server for document management and semantic search with embeddings, featuring web crawling, multiple AI providers, and intelligent chunking",
   "main": "dist/server.js",
   "type": "module",
   "bin": {
-    "mcp-documentation-server": "dist/server.js",
-    "mcp-documentation-embeddings": "dist/embedding-cli.js"
+    "saga": "dist/server.js",
+    "saga-embeddings": "dist/embedding-cli.js"
   },
-  "homepage": "https://github.com/maxinedotdev/mcp-documentation-server#readme",
+  "homepage": "https://github.com/maxinedotdev/saga#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/maxinedotdev/mcp-documentation-server.git"
+    "url": "git+https://github.com/maxinedotdev/saga.git"
   },
   "bugs": {
-    "url": "https://github.com/maxinedotdev/mcp-documentation-server/issues"
+    "url": "https://github.com/maxinedotdev/saga/issues"
   },
   "scripts": {
     "build": "tsc && shx chmod +x dist/*.js",
@@ -24,6 +24,9 @@
     "dev:build": "npm run build && node dist/server.js",
     "embeddings:check": "node dist/embedding-cli.js",
     "inspect": "npx fastmcp inspect src/server.ts",
+    "promote:staging": "./promote-to-staging.sh",
+    "promote:staging:push": "./promote-to-staging.sh --push",
+    "switch:develop": "./switch-to-develop.sh",
     "test": "echo \"Warning: no test specified\" && exit 0",
     "test:unit": "tsx src/vector-db/__tests__/vector-db.test.ts",
     "test:integration": "tsx src/__tests__/integration.test.ts",
@@ -47,6 +50,7 @@
     "@tsconfig/node22": "^22.0.1",
     "@types/fs-extra": "^11.0.4",
     "@types/glob": "^8.1.0",
+    "@types/html-to-text": "^9.0.4",
     "shx": "^0.3.4",
     "tsx": "^4.20.3",
     "typescript": "^5.8.3"
@@ -61,6 +65,7 @@
     "fastmcp": "^3.24.0",
     "fs-extra": "^11.3.0",
     "glob": "^11.0.3",
+    "html-to-text": "^9.0.5",
     "unpdf": "^1.2.1",
     "zod": "^3.25.64"
   },

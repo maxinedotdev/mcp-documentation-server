@@ -1,38 +1,37 @@
-# MCP Documentation Server
+# Saga
 
-A TypeScript-based [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that provides local-first document management and semantic search using embeddings. The server exposes a collection of MCP tools and is optimized for performance with on-disk persistence, an in-memory index, caching, and optional LanceDB vector storage for scalable search.
+A TypeScript-based [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that provides local-first document management and semantic search using embeddings. The server exposes a collection of MCP tools and uses on-disk persistence, an in-memory index, caching, and LanceDB vector storage by default with an in-memory fallback.
 
-## 🚀 AI-Powered Document Intelligence
+## LLM-assisted analysis (optional)
 
-**NEW!** Enhanced with configurable AI providers for advanced document analysis and contextual understanding. Use Gemini (cloud) or any OpenAI-compatible endpoint such as LM Studio (local) or synthetic.new (remote).
+Optional integration with LLM providers for document analysis and summarization. Supports Gemini (cloud) or OpenAI-compatible endpoints such as LM Studio (local) or synthetic.new (remote).
 
-### Key AI Features:
-- **Intelligent Document Analysis**: AI providers understand context, relationships, and concepts
-- **Natural Language Queries**: Ask a question, not just keywords
-- **Smart Summarization**: Get comprehensive overviews and explanations
-- **Contextual Insights**: Understand how different parts of your documents relate
-- **File Mapping Cache**: Avoid re-uploading the same files to Gemini for efficiency
+### Capabilities
+- LLM search via `search_documents_with_ai`
+- Natural-language queries and summaries over document content
+- Context window retrieval for surrounding chunks
+- File mapping cache to avoid re-uploading the same files to Gemini
 
 
 ## Core capabilities
 
-### 🔍 Search & Intelligence
-- **AI-Powered Search** 🤖: Advanced document analysis with the configured AI provider for contextual understanding and intelligent insights
-- **Traditional Semantic Search**: Chunk-based search using embeddings plus in-memory keyword index
-- **Context Window Retrieval**: Gather surrounding chunks for richer LLM answers
+### Search and analysis
+- LLM search using the configured provider (optional)
+- Semantic search using embeddings plus in-memory keyword index
+- Context window retrieval for surrounding chunks
 
-### ⚡ Performance & Optimization
-- **O(1) Document lookup** and keyword index through `DocumentIndex` for instant retrieval
-- **LanceDB Vector Storage** (optional): Scalable disk-based vector search with HNSW indexing for 200+ documents
-- **LRU `EmbeddingCache`** to avoid recomputing embeddings and speed up repeated queries
-- **Parallel chunking** and batch processing to accelerate ingestion of large documents
-- **Streaming file reader** to process large files without high memory usage
-- **Automatic Migration**: Seamlessly migrates existing JSON documents to LanceDB on first use
+### Performance and optimization
+- O(1) document lookup and keyword index through `DocumentIndex`
+- LanceDB vector storage (default): disk-based vector search with HNSW indexing for larger datasets
+- LRU `EmbeddingCache` to avoid recomputing embeddings and speed up repeated queries
+- Parallel chunking and batch processing to accelerate ingestion of large documents
+- Streaming file reader to process large files without high memory usage
+- Automatic migration of existing JSON documents to LanceDB on first use
 
-### 📁 File Management
-- **Intelligent file handling**: copy-based storage with automatic backup preservation
-- **Complete deletion**: removes both JSON files and associated original files
-- **Local-only storage**: no external database required. All data resides in `~/.mcp-documentation-server/`
+### File management
+- Copy-based storage with backup preservation
+- Complete deletion removes JSON files and associated originals
+- Local-only storage; all data resides in `~/.saga/`
 
 ## Quick Start
 
@@ -47,10 +46,10 @@ Example configuration for an MCP client (e.g., Claude Desktop):
       "command": "npx",
       "args": [
         "-y",
-        "@maxinedotdev/mcp-documentation-server"
+        "@maxinedotdev/saga"
       ],
       "env": {
-            "MCP_BASE_DIR": "/path/to/workspace",  // Optional, custom data directory (default: ~/.mcp-documentation-server)
+            "MCP_BASE_DIR": "/path/to/workspace",  // Optional, custom data directory (default: ~/.saga)
             "MCP_VECTOR_DB": "lance",  // Optional, "lance" (default) or "memory" (legacy in-memory)
             "MCP_LANCE_DB_PATH": "~/.data/lancedb",  // Optional, custom LanceDB path (default: {dataDir}/lancedb)
             "MCP_EMBEDDING_PROVIDER": "transformers",  // Optional, "transformers" or "openai"
@@ -58,7 +57,7 @@ Example configuration for an MCP client (e.g., Claude Desktop):
             "MCP_EMBEDDING_BASE_URL": "http://127.0.0.1:1234",  // Optional, OpenAI-compatible embeddings base URL
             "MCP_EMBEDDING_API_KEY": "your-api-key-here",  // Optional, required for remote embeddings
             "MCP_AI_PROVIDER": "gemini",  // Optional, "gemini" or "openai"
-            "GEMINI_API_KEY": "your-api-key-here",  // Optional, enables Gemini AI search
+            "GEMINI_API_KEY": "your-api-key-here",  // Optional, enables Gemini LLM search
             "MCP_AI_BASE_URL": "http://127.0.0.1:1234",  // Optional, OpenAI-compatible base URL (LM Studio / synthetic.new)
             "MCP_AI_MODEL": "ministral-3-8b-instruct-2512",  // Optional, defaults based on base URL
             "MCP_AI_API_KEY": "your-api-key-here",  // Optional, required for synthetic.new
@@ -78,23 +77,23 @@ Example configuration for an MCP client (e.g., Claude Desktop):
 
 The server exposes several tools (validated with Zod schemas) for document lifecycle and search:
 
-### 📄 Document Management
+### Document management
 - `add_document` — Add a document (title, content, metadata)
 - `list_documents` — List documents with pagination; metadata/preview are optional
 - `get_document` — Retrieve a full document by id
 - `delete_document` — Remove a document, its chunks, and associated original files
 - `delete_crawl_session` — Remove all documents created by a crawl session
 
-### 📁 File Processing
+### File processing
 - `process_uploads` — Convert files in uploads folder into documents (chunking + embeddings + backup preservation)
 - `get_uploads_path` — Returns the absolute uploads folder path
 - `list_uploads_files` — Lists files in uploads folder
 
-### 🧭 Documentation Crawling
+### Documentation crawling
 - `crawl_documentation` — Crawl public docs from a seed URL with depth/page limits and robots.txt compliance
 
-### 🔍 Search & Intelligence
-- `search_documents_with_ai` — **🤖 AI-powered search using the configured provider** for advanced document analysis (requires provider configuration)
+### Search and analysis
+- `search_documents_with_ai` — LLM search using the configured provider (requires provider configuration)
 - `search_documents` — Semantic search within a document (returns chunk hits and LLM hint)
 - `get_context_window` — Return a window of chunks around a target chunk index
 
@@ -106,37 +105,37 @@ Configure behavior via environment variables. Important options:
 - `MCP_VECTOR_DB` — vector database selection: `lance` (default, LanceDB) or `memory` (legacy in-memory).
 - `MCP_LANCE_DB_PATH` — custom path for LanceDB storage (default: `{dataDir}/lancedb`).
 
-**LanceDB Benefits**:
-- **Scalable**: Efficient disk-based vector search with HNSW indexing
-- **Fast**: 2-10x faster than in-memory for 200+ documents
-- **Low Memory**: O(1) memory usage for queries vs O(n) for in-memory
-- **SQL Filtering**: Support for metadata-based queries
-- **Automatic Migration**: Seamlessly migrates existing JSON documents on first use
-- **Local-First**: No external server required, all data stored locally
+**LanceDB characteristics**:
+- Disk-based vector search with HNSW indexing
+- Scales better than in-memory as the dataset grows
+- Lower memory usage during queries
+- Metadata filtering support
+- Automatic migration of existing JSON documents on first use
+- Local-first storage (no external server required)
 
-**When to Use LanceDB**:
-- 50+ documents in your knowledge base
+**When to use LanceDB**:
+- Larger document sets
 - Frequent search queries
-- Need metadata filtering
+- Metadata filtering
 - Limited system memory
 
-**When to Use In-Memory**:
-- Small document sets (< 50 documents)
+**When to use in-memory**:
+- Small document sets
 - Simple setup without additional storage
 - Testing and development
 
 ### General Configuration
-- `MCP_BASE_DIR` — base directory for data storage (default: `~/.mcp-documentation-server`). Supports `~` expansion for the home directory.
+- `MCP_BASE_DIR` — base directory for data storage (default: `~/.saga`). Supports `~` expansion for the home directory.
 - `MCP_EMBEDDING_PROVIDER` — embedding provider selection: `transformers` or `openai` (optional; defaults to `transformers`).
 - `MCP_EMBEDDING_MODEL` — embedding model name. Defaults to `Xenova/all-MiniLM-L6-v2` for Transformers.js or `text-embedding-nomic-embed-text-v1.5` for LM Studio.
 - `MCP_EMBEDDING_BASE_URL` — OpenAI-compatible embeddings base URL (required for `openai`, e.g. `http://127.0.0.1:1234`).
 - `MCP_EMBEDDING_API_KEY` — OpenAI-compatible embeddings API key (required for remote embeddings).
-- `MCP_AI_PROVIDER` — AI provider selection: `gemini` or `openai` (optional; defaults based on configured keys).
+- `MCP_AI_PROVIDER` — LLM provider selection: `gemini` or `openai` (optional; defaults based on configured keys).
 - `MCP_AI_BASE_URL` — OpenAI-compatible base URL (required for `openai`, e.g. `http://127.0.0.1:1234` or `https://api.synthetic.new/openai/v1`).
 - `MCP_AI_MODEL` — OpenAI-compatible model name (optional; defaults based on base URL).
 - `MCP_AI_API_KEY` — OpenAI-compatible API key (required for synthetic.new, optional for local LM Studio).
-- `MCP_AI_MAX_CONTEXT_CHUNKS` — Max chunks included in AI prompt for OpenAI-compatible providers (default: `6`).
-- `GEMINI_API_KEY` — **Google Gemini API key** for AI-powered search features (optional, enables `search_documents_with_ai` when provider is Gemini).
+- `MCP_AI_MAX_CONTEXT_CHUNKS` — Max chunks included in LLM prompt for OpenAI-compatible providers (default: `6`).
+- `GEMINI_API_KEY` — Google Gemini API key for LLM search features (optional, enables `search_documents_with_ai` when provider is Gemini).
 - `MCP_INDEXING_ENABLED` — enable/disable the `DocumentIndex` (true/false). Default: `true`.
 - `MCP_CACHE_SIZE` — LRU embedding cache size (integer). Default: `1000`.
 - `MCP_PARALLEL_ENABLED` — enable parallel chunking (true/false). Default: `true`.
@@ -145,14 +144,14 @@ Configure behavior via environment variables. Important options:
 - `MCP_STREAM_CHUNK_SIZE` — streaming buffer size in bytes. Default: `65536` (64KB).
 - `MCP_STREAM_FILE_SIZE_LIMIT` — threshold (bytes) to switch to streaming path. Default: `10485760` (10MB).
 
-## AI provider setup
+## LLM provider setup
 
 - **Gemini** (cloud): set `MCP_AI_PROVIDER=gemini` and `GEMINI_API_KEY` from [Google AI Studio](https://aistudio.google.com/app/apikey).
 - **LM Studio** (local): set `MCP_AI_PROVIDER=openai` and `MCP_AI_BASE_URL=http://127.0.0.1:1234`. Default model is `ministral-3-8b-instruct-2512` unless `MCP_AI_MODEL` overrides it.
 - **synthetic.new** (remote): set `MCP_AI_PROVIDER=openai`, `MCP_AI_BASE_URL=https://api.synthetic.new/openai/v1`, and `MCP_AI_API_KEY`. Default model is `glm-4.7` unless `MCP_AI_MODEL` overrides it.
 - If `MCP_AI_PROVIDER` is unset, the server falls back to Gemini when `GEMINI_API_KEY` is set, otherwise it uses OpenAI-compatible settings when `MCP_AI_BASE_URL` is set.
 
-## AI provider validation
+## LLM provider validation
 
 - Start the server with the provider env vars configured.
 - Use `list_documents` (with `limit`/`offset`) to obtain a document ID.
@@ -173,7 +172,7 @@ MCP_VECTOR_DB=lance               # "lance" (default) or "memory" (legacy)
 MCP_LANCE_DB_PATH=~/.data/lancedb  # Custom LanceDB path (optional)
 
 # Base Directory
-MCP_BASE_DIR=/path/to/workspace   # Base directory for data storage (default: ~/.mcp-documentation-server)
+MCP_BASE_DIR=/path/to/workspace   # Base directory for data storage (default: ~/.saga)
 
 # Indexing and Performance
 MCP_INDEXING_ENABLED=true          # Enable O(1) indexing (default: true)
@@ -190,19 +189,19 @@ MCP_EMBEDDING_MODEL=Xenova/all-MiniLM-L6-v2  # Embedding model name
 MCP_EMBEDDING_BASE_URL=http://127.0.0.1:1234  # OpenAI-compatible embeddings base URL (optional)
 MCP_EMBEDDING_API_KEY=your-api-key-here  # OpenAI-compatible embeddings API key (required for remote)
 
-# AI Provider
+# LLM Provider
 MCP_AI_PROVIDER=gemini             # "gemini" or "openai" (optional)
 MCP_AI_BASE_URL=http://127.0.0.1:1234  # OpenAI-compatible base URL (optional)
 MCP_AI_MODEL=ministral-3-8b-instruct-2512  # OpenAI-compatible model (optional)
 MCP_AI_API_KEY=your-api-key-here   # OpenAI-compatible API key (required for synthetic.new)
-MCP_AI_MAX_CONTEXT_CHUNKS=6        # Max chunks in AI prompt (OpenAI-compatible)
+MCP_AI_MAX_CONTEXT_CHUNKS=6        # Max chunks in LLM prompt (OpenAI-compatible)
 GEMINI_API_KEY=your-api-key-here   # Google Gemini API key (optional)
 ```
 
 Default storage layout (data directory):
 
 ```
-~/.mcp-documentation-server/  # Or custom path via MCP_BASE_DIR
+~/.saga/  # Or custom path via MCP_BASE_DIR
 ├── data/        # Document JSON files
 │   ├── *.json   # Document metadata and chunks
 │   └── *.md     # Markdown versions of documents
@@ -221,14 +220,14 @@ When you first use LanceDB, the system automatically detects existing JSON docum
 3. **Migration**: Documents with embeddings are migrated to LanceDB
 4. **Completion**: Migration summary is logged to console
 
-**No manual migration required!** Your existing documents are preserved.
+No manual migration is required. Your existing documents are preserved.
 
 ### Manual Migration
 If you need to re-run migration:
 
 ```bash
 # Re-initialize by deleting LanceDB directory and restarting
-rm -rf ~/.mcp-documentation-server/lancedb
+rm -rf ~/.saga/lancedb
 # Restart your MCP server - migration will run automatically
 ```
 
@@ -308,9 +307,9 @@ To remove a crawl session later:
 }
 ```
 
-### 🤖 AI-Powered Search Examples
+### LLM search examples
 
-**Advanced Analysis** (requires AI provider configuration):
+**Analysis** (requires provider configuration):
 
 ```json
 {
@@ -322,7 +321,7 @@ To remove a crawl session later:
 }
 ```
 
-**Complex Questions**:
+**Complex questions**:
 
 ```json
 {
@@ -334,7 +333,7 @@ To remove a crawl session later:
 }
 ```
 
-**Summarization Requests**:
+**Summaries**:
 
 ```json
 {
@@ -362,18 +361,14 @@ Fetch context window:
 }
 ```
 
-### When to Use AI-Powered Search:
-- **Complex Questions**: "How do these concepts relate to each other?"
-- **Summarization**: "Give me an overview of the main principles"
-- **Analysis**: "What are the key patterns and their trade-offs?"
-- **Explanation**: "Explain this topic as if I were new to it"
-- **Comparison**: "Compare these different approaches"
+### When to use LLM search
+- Complex questions where context matters
+- Summaries and explanations
+- Comparisons across sections or documents
 
-### Performance Benefits:
-- **Smart Caching**: File mapping prevents re-uploading the same content
-- **Efficient Processing**: Only relevant sections are analyzed by the AI provider
-- **Contextual Results**: More accurate and comprehensive answers
-- **Natural Interaction**: Ask questions in plain English
+### LLM search behavior
+- File mapping cache prevents re-uploading the same content
+- Only relevant sections are analyzed by the LLM provider
 
 - Embedding models are downloaded on first use; some models require several hundred MB of downloads.
 - The `DocumentIndex` persists an index file and can be rebuilt if necessary.
@@ -391,14 +386,14 @@ Embedding model selection depends on the provider:
 
 The system derives embedding dimensions from the selected provider (Transformers.js model metadata or OpenAI-compatible response length).
 
-⚠️ **Important**: Changing embedding provider or model requires re-adding all documents as embeddings are incompatible.
+**Important**: Changing embedding provider or model requires re-adding all documents as embeddings are incompatible.
 
 
 ## Development
 
 ```bash
-git clone https://github.com/maxinedotdev/mcp-documentation-server.git
-cd mcp-documentation-server
+git clone https://github.com/maxinedotdev/saga.git
+cd saga
 ```
 
 ```bash
@@ -410,6 +405,16 @@ npm run build
 ```bash
 npm run inspect
 ```
+
+### Branch conventions (local)
+- `develop` is the active integration branch
+- `staging` is the runtime branch; promote by merging `develop` via `./promote-to-staging.sh` (auto-stashes/restores local changes; use `--push` or `npm run promote:staging:push` to publish)
+- `main` tracks upstream and should remain clean locally
+- Switch back to the dev worktree with `./switch-to-develop.sh` or `npm run switch:develop` (auto-stashes/restores local changes)
+
+### Local branch protection
+This repo includes local git hooks that block commits on `main`, block direct commits on `staging`, and block pushes to `main`.
+Run `scripts/setup-githooks.sh` to enable them for this clone.
 
 ## Contributing
 
@@ -424,12 +429,12 @@ MIT - see [LICENSE](LICENSE) file
 
 ## Support
 
-- 📖 [Documentation](https://github.com/maxinedotdev/mcp-documentation-server)
-- 🐛 [Report Issues](https://github.com/maxinedotdev/mcp-documentation-server/issues)
-- 💬 [MCP Community](https://modelcontextprotocol.io/)
+- [Documentation](https://github.com/maxinedotdev/saga)
+- [Report Issues](https://github.com/maxinedotdev/saga/issues)
+- [MCP Community](https://modelcontextprotocol.io/)
 
 ## Acknowledgments
 
 This project was originally created by [@andrea9293](https://github.com/andrea9293). It has been forked and is now maintained by [maxinedotdev](https://github.com/maxinedotdev).
 
-**Built with [FastMCP](https://github.com/punkpeye/fastmcp) and TypeScript** 🚀
+**Built with [FastMCP](https://github.com/punkpeye/fastmcp) and TypeScript**

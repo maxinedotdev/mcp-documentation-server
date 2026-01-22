@@ -10,7 +10,7 @@ type CliOptions = {
 };
 
 function printUsage(): void {
-    console.log(`Usage: mcp-documentation-embeddings [options]
+    console.log(`Usage: saga-embeddings [options]
 
 Options:
   --provider <transformers|openai>   Embedding provider (env: MCP_EMBEDDING_PROVIDER)

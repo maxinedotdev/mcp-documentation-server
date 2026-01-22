@@ -18,16 +18,29 @@ const server = new FastMCP({
 let documentManager: DocumentManager;
 
 async function initializeDocumentManager() {
+    console.error('[Server] initializeDocumentManager START');
+    const startTime = Date.now();
+
     if (!documentManager) {
+        console.error('[Server] Creating new DocumentManager...');
         // Get embedding model from environment variable (provider handles defaults)
         const embeddingModel = process.env.MCP_EMBEDDING_MODEL;
+        console.error(`[Server] Embedding model: ${embeddingModel || 'default'}`);
         const embeddingProvider = createLazyEmbeddingProvider(embeddingModel);
+        console.error('[Server] Embedding provider created');
+
           // Constructor will use default paths automatically
+        console.error('[Server] Calling DocumentManager constructor...');
         documentManager = new DocumentManager(embeddingProvider);
-        console.error(`Document manager initialized with: ${embeddingProvider.getModelName()} (lazy loading)`);
-        console.error(`Data directory: ${documentManager.getDataDir()}`);
-        console.error(`Uploads directory: ${documentManager.getUploadsDir()}`);
+        console.error(`[Server] Document manager initialized with: ${embeddingProvider.getModelName()} (lazy loading)`);
+        console.error(`[Server] Data directory: ${documentManager.getDataDir()}`);
+        console.error(`[Server] Uploads directory: ${documentManager.getUploadsDir()}`);
+    } else {
+        console.error('[Server] DocumentManager already exists, reusing');
     }
+
+    const endTime = Date.now();
+    console.error(`[Server] initializeDocumentManager END - took ${endTime - startTime}ms`);
     return documentManager;
 }
 
@@ -94,7 +107,7 @@ server.addTool({
     parameters: z.object({
         document_id: z.string().describe("The ID of the document to search within"),
         query: z.string().describe("The search query"),
-        limit: z.number().optional().default(10).describe("Maximum number of chunk results to return"),
+        limit: z.number().optional().describe("Maximum number of chunk results to return (defaults to MCP_MAX_SEARCH_RESULTS env var or 10)"),
     }), execute: async (args) => {
         try {
             const manager = await initializeDocumentManager();
@@ -103,7 +116,10 @@ server.addTool({
             if (!document) {
                 throw new Error(`Document with ID '${args.document_id}' Not found. Use 'list_documents' to get all id of documents.`);
             }
-            const results = await manager.searchDocuments(args.document_id, args.query, args.limit);
+            // Use environment variable for default limit if not provided
+            const defaultLimit = parseInt(process.env.MCP_MAX_SEARCH_RESULTS || '10');
+            const limit = args.limit || defaultLimit;
+            const results = await manager.searchDocuments(args.document_id, args.query, limit);
 
             if (results.length === 0) {
                 return "No chunks found matching your query in the specified document.";
