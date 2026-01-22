@@ -3,7 +3,7 @@ import { writeFile, readFile, copyFile, readdir, unlink } from "fs/promises";
 import * as path from "path";
 import { glob } from "glob";
 import { createHash } from 'crypto';
-import { Document, DocumentChunk, DocumentSummary, SearchResult, CodeBlock, EmbeddingProvider } from './types.js';
+import { Document, DocumentChunk, DocumentSummary, SearchResult, CodeBlock, EmbeddingProvider, QueryOptions, QueryResponse, DocumentDiscoveryResult, MetadataFilter } from './types.js';
 import { SimpleEmbeddingProvider } from './embedding-provider.js';
 import { IntelligentChunker } from './intelligent-chunker.js';
 import { extractText } from 'unpdf';
@@ -28,6 +28,8 @@ export class DocumentManager {
     private useVectorDb: boolean;
     private useParallelProcessing: boolean;
     private useStreaming: boolean;
+    private useTagGeneration: boolean;
+    private useGeneratedTagsInQuery: boolean;
     
     constructor(embeddingProvider?: EmbeddingProvider, vectorDatabase?: VectorDatabase) {
         console.error('[DocumentManager] Constructor START');
@@ -48,7 +50,9 @@ export class DocumentManager {
         this.useVectorDb = process.env.MCP_VECTOR_DB !== 'inmemory';
         this.useParallelProcessing = process.env.MCP_PARALLEL_ENABLED !== 'false';
         this.useStreaming = process.env.MCP_STREAMING_ENABLED !== 'false';
-        console.error(`[DocumentManager] Feature flags - Indexing: ${this.useIndexing}, VectorDB: ${this.useVectorDb}, Parallel: ${this.useParallelProcessing}, Streaming: ${this.useStreaming}`);
+        this.useTagGeneration = process.env.MCP_TAG_GENERATION_ENABLED === 'true';
+        this.useGeneratedTagsInQuery = process.env.MCP_GENERATED_TAGS_IN_QUERY === 'true';
+        console.error(`[DocumentManager] Feature flags - Indexing: ${this.useIndexing}, VectorDB: ${this.useVectorDb}, Parallel: ${this.useParallelProcessing}, Streaming: ${this.useStreaming}, TagGeneration: ${this.useTagGeneration}, GeneratedTagsInQuery: ${this.useGeneratedTagsInQuery}`);
         
         console.error('[DocumentManager] Ensuring data directories...');
         this.ensureDataDir();
@@ -297,7 +301,12 @@ export class DocumentManager {
 
         // Add to index if enabled
         if (this.useIndexing && this.documentIndex) {
-            this.documentIndex.addDocument(id, filePath, content, chunks);
+            this.documentIndex.addDocument(id, filePath, content, chunks, title, metadata);
+        }
+
+        // Generate tags in background if enabled
+        if (this.useTagGeneration) {
+            this.generateTagsForDocument(id, title, content);
         }
 
         // Add chunks to vector database if enabled
@@ -541,7 +550,172 @@ export class DocumentManager {
             .update(content)
             .digest('hex')
             .substring(0, 16);
-    }   
+    }
+
+    /**
+     * Generate tags for a document using AI provider
+     * Runs non-blocking in the background
+     */
+    private async generateTagsForDocument(documentId: string, title: string, content: string): Promise<void> {
+        if (!this.useTagGeneration) {
+            return;
+        }
+
+        // Run tag generation in background without blocking
+        setImmediate(async () => {
+            try {
+                console.error(`[DocumentManager] Generating tags for document ${documentId}...`);
+                const tags = await this.generateTags(title, content);
+                
+                if (tags.length > 0) {
+                    // Update document metadata with generated tags
+                    const document = await this.getDocument(documentId);
+                    if (document) {
+                        document.metadata.tags_generated = tags;
+                        document.updated_at = new Date().toISOString();
+                        
+                        // Save updated document
+                        const filePath = this.getDocumentPath(documentId);
+                        await writeFile(filePath, JSON.stringify(document, null, 2));
+                        
+                        // Update index if enabled
+                        if (this.useIndexing && this.documentIndex) {
+                            await this.ensureIndexInitialized();
+                            this.documentIndex.addDocument(
+                                documentId,
+                                filePath,
+                                document.content,
+                                document.chunks,
+                                document.title,
+                                document.metadata
+                            );
+                        }
+                        
+                        console.error(`[DocumentManager] Generated ${tags.length} tags for document ${documentId}: ${tags.join(', ')}`);
+                    }
+                }
+            } catch (error) {
+                console.error(`[DocumentManager] Failed to generate tags for document ${documentId}:`, error);
+            }
+        });
+    }
+
+    /**
+     * Generate tags using configured AI provider
+     */
+    private async generateTags(title: string, content: string): Promise<string[]> {
+        // Truncate content if too long (keep first 2000 chars for context)
+        const truncatedContent = content.length > 2000 ? content.substring(0, 2000) + '...' : content;
+        
+        const system = 'You are an expert document tagger. Generate relevant tags for the given document. Return only a JSON array of tag strings. Tags should be concise, descriptive, and relevant to the document content. Do not include markdown or extra text.';
+        const user = `Document title: ${title}\n\nDocument content:\n${truncatedContent}\n\nGenerate 5-10 relevant tags for this document.`;
+
+        // Check for Gemini provider
+        if (process.env.GEMINI_API_KEY) {
+            try {
+                const { GeminiSearchService } = await import('./gemini-search-service.js');
+                const responseText = await GeminiSearchService.generateTags(
+                    title,
+                    truncatedContent,
+                    process.env.GEMINI_API_KEY
+                );
+                return this.parseTagsFromResponse(responseText);
+            } catch (error) {
+                console.error('[DocumentManager] Failed to generate tags with Gemini:', error);
+                return [];
+            }
+        }
+
+        // Check for OpenAI-compatible provider
+        const baseUrl = process.env.MCP_AI_BASE_URL;
+        const model = process.env.MCP_AI_MODEL;
+        const apiKey = process.env.MCP_AI_API_KEY;
+
+        if (baseUrl && model) {
+            try {
+                const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
+                const v1BaseUrl = normalizedBaseUrl.endsWith('/v1') ? normalizedBaseUrl : `${normalizedBaseUrl}/v1`;
+                
+                const headers: Record<string, string> = {
+                    'Content-Type': 'application/json',
+                };
+                
+                if (apiKey) {
+                    headers.Authorization = `Bearer ${apiKey}`;
+                }
+                
+                const response = await fetch(`${v1BaseUrl}/chat/completions`, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({
+                        model,
+                        temperature: 0.3,
+                        messages: [
+                            { role: 'system', content: system },
+                            { role: 'user', content: user }
+                        ]
+                    })
+                });
+                
+                const payloadText = await response.text();
+                if (!response.ok) {
+                    throw new Error(`OpenAI request failed (${response.status}): ${payloadText}`);
+                }
+                
+                const payload = JSON.parse(payloadText);
+                const responseText = payload?.choices?.[0]?.message?.content || '';
+                
+                return this.parseTagsFromResponse(responseText);
+            } catch (error) {
+                console.error('[DocumentManager] Failed to generate tags with OpenAI provider:', error);
+                return [];
+            }
+        }
+
+        console.warn('[DocumentManager] AI provider not configured, skipping tag generation');
+        return [];
+    }
+
+    /**
+     * Parse tags from AI response
+     */
+    private parseTagsFromResponse(response: string): string[] {
+        // Try to parse as JSON array
+        try {
+            const parsed = JSON.parse(response);
+            if (Array.isArray(parsed)) {
+                return parsed
+                    .filter(tag => typeof tag === 'string' && tag.trim().length > 0)
+                    .map(tag => tag.trim());
+            }
+        } catch {
+            // Not valid JSON, try to extract array from text
+        }
+        
+        // Try to extract array from text using regex
+        const arrayMatch = response.match(/\[([^\]]+)\]/);
+        if (arrayMatch) {
+            try {
+                const tags = JSON.parse(arrayMatch[0]);
+                if (Array.isArray(tags)) {
+                    return tags
+                        .filter(tag => typeof tag === 'string' && tag.trim().length > 0)
+                        .map(tag => tag.trim());
+                }
+            } catch {
+                // Fall through to line-based parsing
+            }
+        }
+        
+        // Fall back to line-based parsing (comma or newline separated)
+        const lines = response
+            .replace(/["'`]/g, '')
+            .split(/[,\n]/)
+            .map(line => line.trim())
+            .filter(line => line.length > 0 && line.length < 50);
+        
+        return lines;
+    }
     
     /**
      * Extract text content from a PDF file with streaming support for large files
@@ -822,6 +996,168 @@ export class DocumentManager {
     }
 
     /**
+     * Query documents with vector-first ranking and keyword fallback
+     * Returns ranked document summaries without full content
+     * @param queryText - The search query text
+     * @param options - Query options including pagination and filters
+     * @returns QueryResponse with ranked document results and pagination metadata
+     */
+    async query(queryText: string, options: QueryOptions = {}): Promise<QueryResponse> {
+        const limit = options.limit ?? 10;
+        const offset = options.offset ?? 0;
+        const includeMetadata = options.include_metadata ?? true;
+        const filters = options.filters ?? {};
+
+        // Try vector search first
+        let results: DocumentDiscoveryResult[] = [];
+        
+        if (this.useVectorDb && this.vectorDatabase) {
+            const vectorDbReady = await this.ensureVectorDbReady();
+            if (vectorDbReady) {
+                try {
+                    const queryEmbedding = await this.embeddingProvider.generateEmbedding(queryText);
+                    const vectorResults = await this.vectorDatabase.search(
+                        queryEmbedding,
+                        limit + offset + 10, // Get extra results for filtering
+                        this.buildFilterQuery(filters)
+                    );
+                    
+                    // Group by document ID and aggregate scores
+                    const docScoreMap = new Map<string, { score: number; chunks: number }>();
+                    
+                    for (const result of vectorResults) {
+                        const docId = result.chunk.document_id;
+                        const existing = docScoreMap.get(docId) || { score: 0, chunks: 0 };
+                        docScoreMap.set(docId, {
+                            score: existing.score + result.score,
+                            chunks: existing.chunks + 1
+                        });
+                    }
+                    
+                    // Convert to results with average scores
+                    const similarityThreshold = parseFloat(process.env.MCP_SIMILARITY_THRESHOLD || '0.3');
+                    results = Array.from(docScoreMap.entries())
+                        .filter(([_, data]) => (data.score / data.chunks) >= similarityThreshold)
+                        .map(([docId, data]) => ({
+                            id: docId,
+                            title: '',
+                            score: data.score / data.chunks,
+                            updated_at: '',
+                            chunks_count: data.chunks
+                        }))
+                        .sort((a, b) => b.score - a.score);
+                } catch (error) {
+                    console.warn('[DocumentManager] Vector search failed, falling back to keyword search:', error);
+                }
+            }
+        }
+        
+        // Fall back to keyword search if vector search returned insufficient results
+        const minVectorResults = Math.max(1, Math.floor(limit / 2));
+        if (results.length < minVectorResults && this.useIndexing && this.documentIndex) {
+            await this.ensureIndexInitialized();
+            const keywordDocIds = this.documentIndex.searchByCombinedCriteria(queryText);
+            
+            // Apply metadata filters to keyword results
+            let filteredDocIds = Array.from(keywordDocIds);
+            if (filters.tags && filters.tags.length > 0) {
+                const tagResults = this.documentIndex.searchByTags(filters.tags);
+                filteredDocIds = filteredDocIds.filter(id => tagResults.has(id));
+            }
+            if (filters.source) {
+                const sourceResults = this.documentIndex.searchBySource(filters.source);
+                filteredDocIds = filteredDocIds.filter(id => sourceResults.has(id));
+            }
+            if (filters.crawl_id) {
+                const crawlResults = this.documentIndex.searchByCrawlId(filters.crawl_id);
+                filteredDocIds = filteredDocIds.filter(id => crawlResults.has(id));
+            }
+            
+            // Build keyword results
+            const keywordResults: DocumentDiscoveryResult[] = [];
+            for (const docId of filteredDocIds) {
+                // Skip if already in vector results
+                if (results.some(r => r.id === docId)) continue;
+                
+                const searchFields = this.documentIndex!.getDocumentSearchFields(docId);
+                if (searchFields) {
+                    keywordResults.push({
+                        id: docId,
+                        title: searchFields.title,
+                        score: 0.5, // Default score for keyword matches
+                        updated_at: searchFields.source_metadata.processedAt,
+                        chunks_count: searchFields.keywords.length
+                    });
+                }
+            }
+            
+            // Merge results: vector results first, then keyword results
+            results = [...results, ...keywordResults];
+        }
+        
+        // Fetch document details for all results
+        const finalResults: DocumentDiscoveryResult[] = [];
+        for (let i = 0; i < results.length; i++) {
+            const result = results[i];
+            const document = await this.getDocument(result.id);
+            if (document) {
+                finalResults.push({
+                    id: document.id,
+                    title: document.title,
+                    score: result.score,
+                    updated_at: document.updated_at,
+                    chunks_count: document.chunks.length,
+                    metadata: includeMetadata ? document.metadata : undefined
+                });
+            }
+        }
+        
+        // Apply pagination
+        const paginatedResults = finalResults.slice(offset, offset + limit);
+        
+        return {
+            results: paginatedResults,
+            pagination: {
+                total_documents: finalResults.length,
+                returned: paginatedResults.length,
+                has_more: offset + limit < finalResults.length,
+                next_offset: offset + limit < finalResults.length ? offset + limit : null
+            }
+        };
+    }
+
+    /**
+     * Build filter query string for vector database search
+     */
+    private buildFilterQuery(filters: MetadataFilter): string {
+        const conditions: string[] = [];
+        
+        if (filters.tags && filters.tags.length > 0) {
+            const tags = filters.tags.map(t => `'${t}'`).join(', ');
+            // Include both regular tags and generated tags in filter
+            conditions.push(`(tags IN [${tags}] OR tags_generated IN [${tags}])`);
+        }
+        
+        if (filters.source) {
+            conditions.push(`source = '${filters.source}'`);
+        }
+        
+        if (filters.crawl_id) {
+            conditions.push(`crawl_id = '${filters.crawl_id}'`);
+        }
+        
+        if (filters.author) {
+            conditions.push(`author = '${filters.author}'`);
+        }
+        
+        if (filters.contentType) {
+            conditions.push(`contentType = '${filters.contentType}'`);
+        }
+        
+        return conditions.length > 0 ? conditions.join(' AND ') : '';
+    }
+
+    /**
      * Add code blocks to the vector database for a document
      * @param documentId - The document ID to associate code blocks with
      * @param codeBlocks - Array of code blocks to add
@@ -885,7 +1221,9 @@ export class DocumentManager {
                 indexing: this.useIndexing,
                 vectorDb: this.useVectorDb,
                 parallelProcessing: this.useParallelProcessing,
-                streaming: this.useStreaming
+                streaming: this.useStreaming,
+                tagGeneration: this.useTagGeneration,
+                generatedTagsInQuery: this.useGeneratedTagsInQuery
             }
         };
 
