@@ -529,7 +529,8 @@ export class LanceDBAdapter implements VectorDatabase {
                     metadata: row.metadata,
                     source_url: row.source_url,
                 },
-                score: row._distance ? 1 - row._distance : 1, // Convert distance to similarity
+                // Convert distance to similarity and clamp to [0, 1] range
+                score: row._distance ? Math.max(0, Math.min(1, 1 - row._distance)) : 1,
             })).sort((a: CodeBlockSearchResult, b: CodeBlockSearchResult) => b.score - a.score);
         } catch (error) {
             logger.error("Failed to search code blocks:", error);

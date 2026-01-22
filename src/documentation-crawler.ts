@@ -577,6 +577,9 @@ function normalizeLanguageTag(language: string): string {
     
     const normalized = language.toLowerCase().trim();
     
+    // Return 'unknown' for empty strings after trimming
+    if (!normalized) return 'unknown';
+    
     // Common language aliases
     const aliases: Record<string, string> = {
         'javascript': 'javascript',
