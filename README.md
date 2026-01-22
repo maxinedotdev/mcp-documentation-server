@@ -16,6 +16,7 @@ Optional integration with LLM providers for document analysis and summarization.
 ## Core capabilities
 
 ### Search and analysis
+- Query-first document discovery with hybrid ranking (vector-first with keyword fallback)
 - LLM search using the configured provider (optional)
 - Semantic search using embeddings plus in-memory keyword index
 - Context window retrieval for surrounding chunks
@@ -70,8 +71,208 @@ Example configuration for an MCP client (e.g., Claude Desktop):
 ### Basic workflow
 
 - Add documents using the `add_document` tool or by placing `.txt`, `.md`, or `.pdf` files into the uploads folder and calling `process_uploads`.
+- Use `query` for query-first document discovery to find relevant documents efficiently.
 - Search documents with `search_documents` to get ranked chunk hits.
 - Use `get_context_window` to fetch neighboring chunks and provide LLMs with richer context.
+
+## Query-First Document Discovery
+
+The server now supports query-first document discovery through the `query` tool, which provides a more efficient way to find relevant documents compared to browsing through all documents with `list_documents`.
+
+### How It Works
+
+The `query` tool uses a hybrid ranking strategy that combines vector search with keyword fallback:
+
+1. **Vector Search First**: Performs semantic search using embeddings to find documents with similar content
+2. **Score Aggregation**: Groups search results by document ID and calculates average relevance scores
+3. **Keyword Fallback**: If vector search returns insufficient results, falls back to keyword search using the in-memory index
+4. **Ranking**: Returns documents ranked by relevance score (vector results first, then keyword results)
+
+### Query vs. list_documents
+
+**Use `query` when:**
+- You have a specific topic or question in mind
+- You want to find the most relevant documents quickly
+- You need semantic search capabilities
+- You want to filter results by metadata (tags, source, crawl_id, etc.)
+
+**Use `list_documents` when:**
+- You need to browse all documents in the knowledge base
+- You want to see pagination-based listings
+- You're exploring the document collection without a specific query
+- You need document counts and basic metadata
+
+### Usage Examples
+
+**Basic query:**
+
+```json
+{
+  "tool": "query",
+  "arguments": {
+    "query": "machine learning algorithms",
+    "limit": 5
+  }
+}
+```
+
+**Query with filters:**
+
+```json
+{
+  "tool": "query",
+  "arguments": {
+    "query": "database optimization",
+    "limit": 10,
+    "filters": {
+      "tags": ["performance", "sql"],
+      "source": "upload"
+    }
+  }
+}
+```
+
+**Query with pagination:**
+
+```json
+{
+  "tool": "query",
+  "arguments": {
+    "query": "react hooks",
+    "limit": 10,
+    "offset": 20
+  }
+}
+```
+
+**Query for crawled documents:**
+
+```json
+{
+  "tool": "query",
+  "arguments": {
+    "query": "API authentication",
+    "filters": {
+      "source": "crawl",
+      "crawl_id": "your-crawl-id"
+    },
+    "limit": 5
+  }
+}
+```
+
+### Migration Guide: From list_documents to query
+
+**Before (using list_documents):**
+```json
+{
+  "tool": "list_documents",
+  "arguments": {
+    "limit": 50,
+    "include_metadata": true,
+    "include_preview": true
+  }
+}
+// Then manually review all documents to find relevant ones
+```
+
+**After (using query):**
+```json
+{
+  "tool": "query",
+  "arguments": {
+    "query": "your topic here",
+    "limit": 10,
+    "include_metadata": true
+  }
+}
+// Get only the most relevant documents directly
+```
+
+**Benefits of migration:**
+- Faster document discovery (no need to browse all documents)
+- Semantic understanding of your query
+- Automatic relevance ranking
+- Reduced bandwidth and processing overhead
+- Better scalability with large document collections
+
+### Hybrid Ranking Strategy
+
+The query tool employs a sophisticated hybrid ranking approach:
+
+1. **Vector Search**: Uses embeddings to find semantically similar documents
+   - Calculates cosine similarity between query and document chunks
+   - Aggregates chunk scores at the document level
+   - Applies similarity threshold filtering (configurable via `MCP_SIMILARITY_THRESHOLD`)
+
+2. **Keyword Fallback**: Activates when vector search returns insufficient results
+   - Searches document titles, tags, and indexed keywords
+   - Provides complementary results for exact matches
+   - Ensures comprehensive coverage
+
+3. **Result Merging**: Combines vector and keyword results
+   - Vector results ranked first (higher relevance)
+   - Keyword results appended (lower relevance score)
+   - Deduplicates documents across both result sets
+
+### Performance Benefits
+
+The query-first approach delivers significant performance advantages:
+
+- **Reduced I/O**: Only retrieves metadata for relevant documents, not full content
+- **Vector Database Optimization**: Leverages LanceDB's HNSW indexing for fast similarity search
+- **In-Memory Indexing**: Uses DocumentIndex for O(1) keyword lookups
+- **Efficient Pagination**: Supports large document collections with minimal overhead
+- **Scalability**: Performance remains consistent as document count grows
+
+### Optional Tag Generation
+
+The server can automatically generate tags for documents using AI providers, enhancing discoverability.
+
+**Configuration:**
+
+```env
+# Enable automatic tag generation
+MCP_TAG_GENERATION_ENABLED=true
+
+# Use generated tags in query search (recommended)
+MCP_GENERATED_TAGS_IN_QUERY=true
+```
+
+**How it works:**
+1. When a document is added, tags are generated asynchronously in the background
+2. Tags are stored in `metadata.tags_generated` field
+3. The query tool automatically includes generated tags when filtering by tags
+4. Generated tags enhance search relevance without requiring manual tagging
+
+**Example usage with generated tags:**
+
+```json
+{
+  "tool": "query",
+  "arguments": {
+    "query": "web development",
+    "filters": {
+      "tags": ["frontend", "javascript"]
+    }
+  }
+}
+// Will match documents with both manually set tags and AI-generated tags
+```
+
+**Supported AI providers for tag generation:**
+- Gemini (cloud): Requires `GEMINI_API_KEY`
+- OpenAI-compatible (local/remote): Requires `MCP_AI_BASE_URL` and `MCP_AI_MODEL`
+
+### Backward Compatibility
+
+The `query` tool is fully backward compatible with existing functionality:
+
+- All existing tools continue to work as before
+- `list_documents` remains available for browsing workflows
+- Existing documents without generated tags work correctly
+- Migration to query-first discovery is optional and incremental
+- No changes required to existing document storage format
 
 ## Exposed MCP tools
 
@@ -83,6 +284,7 @@ The server exposes several tools (validated with Zod schemas) for document lifec
 - `get_document` — Retrieve a full document by id
 - `delete_document` — Remove a document, its chunks, and associated original files
 - `delete_crawl_session` — Remove all documents created by a crawl session
+- `query` — Query-first document discovery with hybrid ranking and metadata filtering
 
 ### File processing
 - `process_uploads` — Convert files in uploads folder into documents (chunking + embeddings + backup preservation)
@@ -143,6 +345,9 @@ Configure behavior via environment variables. Important options:
 - `MCP_STREAMING_ENABLED` — enable streaming reads for large files. Default: `true`.
 - `MCP_STREAM_CHUNK_SIZE` — streaming buffer size in bytes. Default: `65536` (64KB).
 - `MCP_STREAM_FILE_SIZE_LIMIT` — threshold (bytes) to switch to streaming path. Default: `10485760` (10MB).
+- `MCP_TAG_GENERATION_ENABLED` — enable automatic tag generation using AI provider (true/false). Default: `false`.
+- `MCP_GENERATED_TAGS_IN_QUERY` — use AI-generated tags in query search filters (true/false). Default: `false`.
+- `MCP_SIMILARITY_THRESHOLD` — minimum similarity score for vector search results (0.0-1.0). Default: `0.3`.
 
 ## LLM provider setup
 
@@ -182,6 +387,11 @@ MCP_MAX_WORKERS=4                  # Parallel worker count (default: 4)
 MCP_STREAMING_ENABLED=true         # Enable streaming (default: true)
 MCP_STREAM_CHUNK_SIZE=65536        # Stream chunk size (default: 64KB)
 MCP_STREAM_FILE_SIZE_LIMIT=10485760 # Streaming threshold (default: 10MB)
+
+# Tag Generation
+MCP_TAG_GENERATION_ENABLED=false  # Enable automatic tag generation (default: false)
+MCP_GENERATED_TAGS_IN_QUERY=false # Use generated tags in query filters (default: false)
+MCP_SIMILARITY_THRESHOLD=0.3       # Minimum similarity score for vector search (default: 0.3)
 
 # Embedding Provider
 MCP_EMBEDDING_PROVIDER=transformers  # "transformers" or "openai" (optional)
@@ -247,6 +457,75 @@ export MCP_VECTOR_DB=memory
 - **Error handling**: If migration fails, system falls back to in-memory
 
 ## Usage examples
+
+### Query-First Document Discovery
+
+Find relevant documents using semantic search:
+
+```json
+{
+  "tool": "query",
+  "arguments": {
+    "query": "machine learning algorithms",
+    "limit": 5
+  }
+}
+```
+
+Find documents with metadata filters:
+
+```json
+{
+  "tool": "query",
+  "arguments": {
+    "query": "react hooks tutorial",
+    "limit": 10,
+    "filters": {
+      "tags": ["frontend", "javascript"],
+      "source": "upload"
+    }
+  }
+}
+```
+
+Paginate through query results:
+
+```json
+{
+  "tool": "query",
+  "arguments": {
+    "query": "database optimization",
+    "limit": 10,
+    "offset": 20
+  }
+}
+```
+
+**Response format:**
+
+```json
+{
+  "results": [
+    {
+      "id": "doc-123",
+      "title": "React Hooks Tutorial",
+      "score": 0.85,
+      "updated_at": "2024-01-15T10:30:00Z",
+      "chunks_count": 15,
+      "metadata": {
+        "tags": ["frontend", "javascript", "react"],
+        "source": "upload"
+      }
+    }
+  ],
+  "pagination": {
+    "total_documents": 42,
+    "returned": 5,
+    "has_more": true,
+    "next_offset": 5
+  }
+}
+```
 
 ### Basic Document Operations
 
