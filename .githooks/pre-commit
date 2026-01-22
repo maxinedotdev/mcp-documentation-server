@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
+
+if [[ -z "$branch" ]]; then
+  exit 0
+fi
+
+case "$branch" in
+  main|staging)
+    echo "ERROR: Commits to '$branch' are blocked locally. Use 'develop' or a feature branch." >&2
+    exit 1
+    ;;
+esac
