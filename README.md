@@ -4,13 +4,12 @@ A TypeScript-based [Model Context Protocol (MCP)](https://modelcontextprotocol.i
 
 ## LLM-assisted analysis (optional)
 
-Optional integration with LLM providers for document analysis and summarization. Supports Gemini (cloud) or OpenAI-compatible endpoints such as LM Studio (local) or synthetic.new (remote).
+Optional integration with LLM providers for document analysis and summarization. Supports OpenAI-compatible endpoints such as LM Studio (local) or synthetic.new (remote).
 
 ### Capabilities
 - LLM search via `search_documents_with_ai`
 - Natural-language queries and summaries over document content
 - Context window retrieval for surrounding chunks
-- File mapping cache to avoid re-uploading the same files to Gemini
 
 
 ## Core capabilities
@@ -57,8 +56,6 @@ Example configuration for an MCP client (e.g., Claude Desktop):
             "MCP_EMBEDDING_MODEL": "Xenova/all-MiniLM-L6-v2",
             "MCP_EMBEDDING_BASE_URL": "http://127.0.0.1:1234",  // Optional, OpenAI-compatible embeddings base URL
             "MCP_EMBEDDING_API_KEY": "your-api-key-here",  // Optional, required for remote embeddings
-            "MCP_AI_PROVIDER": "gemini",  // Optional, "gemini" or "openai"
-            "GEMINI_API_KEY": "your-api-key-here",  // Optional, enables Gemini LLM search
             "MCP_AI_BASE_URL": "http://127.0.0.1:1234",  // Optional, OpenAI-compatible base URL (LM Studio / synthetic.new)
             "MCP_AI_MODEL": "ministral-3-8b-instruct-2512",  // Optional, defaults based on base URL
             "MCP_AI_API_KEY": "your-api-key-here",  // Optional, required for synthetic.new
@@ -261,7 +258,6 @@ MCP_GENERATED_TAGS_IN_QUERY=true
 ```
 
 **Supported AI providers for tag generation:**
-- Gemini (cloud): Requires `GEMINI_API_KEY`
 - OpenAI-compatible (local/remote): Requires `MCP_AI_BASE_URL` and `MCP_AI_MODEL`
 
 ### Backward Compatibility
@@ -332,12 +328,10 @@ Configure behavior via environment variables. Important options:
 - `MCP_EMBEDDING_MODEL` — embedding model name. Defaults to `Xenova/all-MiniLM-L6-v2` for Transformers.js or `text-embedding-nomic-embed-text-v1.5` for LM Studio.
 - `MCP_EMBEDDING_BASE_URL` — OpenAI-compatible embeddings base URL (required for `openai`, e.g. `http://127.0.0.1:1234`).
 - `MCP_EMBEDDING_API_KEY` — OpenAI-compatible embeddings API key (required for remote embeddings).
-- `MCP_AI_PROVIDER` — LLM provider selection: `gemini` or `openai` (optional; defaults based on configured keys).
-- `MCP_AI_BASE_URL` — OpenAI-compatible base URL (required for `openai`, e.g. `http://127.0.0.1:1234` or `https://api.synthetic.new/openai/v1`).
+- `MCP_AI_BASE_URL` — OpenAI-compatible base URL (required, e.g. `http://127.0.0.1:1234` or `https://api.synthetic.new/openai/v1`).
 - `MCP_AI_MODEL` — OpenAI-compatible model name (optional; defaults based on base URL).
 - `MCP_AI_API_KEY` — OpenAI-compatible API key (required for synthetic.new, optional for local LM Studio).
-- `MCP_AI_MAX_CONTEXT_CHUNKS` — Max chunks included in LLM prompt for OpenAI-compatible providers (default: `6`).
-- `GEMINI_API_KEY` — Google Gemini API key for LLM search features (optional, enables `search_documents_with_ai` when provider is Gemini).
+- `MCP_AI_MAX_CONTEXT_CHUNKS` — Max chunks included in LLM prompt (default: `6`).
 - `MCP_INDEXING_ENABLED` — enable/disable the `DocumentIndex` (true/false). Default: `true`.
 - `MCP_CACHE_SIZE` — LRU embedding cache size (integer). Default: `1000`.
 - `MCP_PARALLEL_ENABLED` — enable parallel chunking (true/false). Default: `true`.
@@ -351,10 +345,8 @@ Configure behavior via environment variables. Important options:
 
 ## LLM provider setup
 
-- **Gemini** (cloud): set `MCP_AI_PROVIDER=gemini` and `GEMINI_API_KEY` from [Google AI Studio](https://aistudio.google.com/app/apikey).
-- **LM Studio** (local): set `MCP_AI_PROVIDER=openai` and `MCP_AI_BASE_URL=http://127.0.0.1:1234`. Default model is `ministral-3-8b-instruct-2512` unless `MCP_AI_MODEL` overrides it.
-- **synthetic.new** (remote): set `MCP_AI_PROVIDER=openai`, `MCP_AI_BASE_URL=https://api.synthetic.new/openai/v1`, and `MCP_AI_API_KEY`. Default model is `glm-4.7` unless `MCP_AI_MODEL` overrides it.
-- If `MCP_AI_PROVIDER` is unset, the server falls back to Gemini when `GEMINI_API_KEY` is set, otherwise it uses OpenAI-compatible settings when `MCP_AI_BASE_URL` is set.
+- **LM Studio** (local): set `MCP_AI_BASE_URL=http://127.0.0.1:1234`. Default model is `ministral-3-8b-instruct-2512` unless `MCP_AI_MODEL` overrides it.
+- **synthetic.new** (remote): set `MCP_AI_BASE_URL=https://api.synthetic.new/openai/v1` and `MCP_AI_API_KEY`. Default model is `glm-4.7` unless `MCP_AI_MODEL` overrides it.
 
 ## LLM provider validation
 
@@ -399,13 +391,11 @@ MCP_EMBEDDING_MODEL=Xenova/all-MiniLM-L6-v2  # Embedding model name
 MCP_EMBEDDING_BASE_URL=http://127.0.0.1:1234  # OpenAI-compatible embeddings base URL (optional)
 MCP_EMBEDDING_API_KEY=your-api-key-here  # OpenAI-compatible embeddings API key (required for remote)
 
-# LLM Provider
-MCP_AI_PROVIDER=gemini             # "gemini" or "openai" (optional)
-MCP_AI_BASE_URL=http://127.0.0.1:1234  # OpenAI-compatible base URL (optional)
-MCP_AI_MODEL=ministral-3-8b-instruct-2512  # OpenAI-compatible model (optional)
-MCP_AI_API_KEY=your-api-key-here   # OpenAI-compatible API key (required for synthetic.new)
-MCP_AI_MAX_CONTEXT_CHUNKS=6        # Max chunks in LLM prompt (OpenAI-compatible)
-GEMINI_API_KEY=your-api-key-here   # Google Gemini API key (optional)
+# LLM Provider (OpenAI-compatible)
+MCP_AI_BASE_URL=http://127.0.0.1:1234  # OpenAI-compatible base URL (e.g., LM Studio or synthetic.new)
+MCP_AI_MODEL=ministral-3-8b-instruct-2512  # OpenAI-compatible model (optional; defaults based on base URL)
+MCP_AI_API_KEY=your-api-key-here   # OpenAI-compatible API key (required for synthetic.new, optional for local)
+MCP_AI_MAX_CONTEXT_CHUNKS=6        # Max chunks in LLM prompt
 ```
 
 Default storage layout (data directory):
@@ -646,7 +636,6 @@ Fetch context window:
 - Comparisons across sections or documents
 
 ### LLM search behavior
-- File mapping cache prevents re-uploading the same content
 - Only relevant sections are analyzed by the LLM provider
 
 - Embedding models are downloaded on first use; some models require several hundred MB of downloads.

@@ -1,5 +1,4 @@
 import { DocumentManager } from './document-manager.js';
-import { GeminiSearchService } from './gemini-search-service.js';
 import { SearchResult } from './types.js';
 
 const LM_STUDIO_BASE_URL = 'http://127.0.0.1:1234';
@@ -8,7 +7,7 @@ const DEFAULT_LOCAL_MODEL = 'ministral-3-8b-instruct-2512';
 const DEFAULT_REMOTE_MODEL = 'glm-4.7';
 const DEFAULT_MAX_CONTEXT_CHUNKS = 12;
 
-export type AiProviderType = 'gemini' | 'openai';
+export type AiProviderType = 'openai';
 
 export type AiSearchSection = {
     section_title: string;
@@ -71,15 +70,13 @@ export function resolveAiProviderSelection(): AiProviderSelection {
     const providerEnv = process.env.MCP_AI_PROVIDER?.toLowerCase();
     let provider: AiProviderType | null = null;
 
-    if (providerEnv === 'gemini' || providerEnv === 'openai') {
+    if (providerEnv === 'openai') {
         provider = providerEnv;
     } else if (providerEnv) {
         return {
             enabled: false,
             reason: `Unknown MCP_AI_PROVIDER value: ${providerEnv}`,
         };
-    } else if (process.env.GEMINI_API_KEY) {
-        provider = 'gemini';
     } else if (process.env.MCP_AI_BASE_URL) {
         provider = 'openai';
     }
@@ -87,26 +84,7 @@ export function resolveAiProviderSelection(): AiProviderSelection {
     if (!provider) {
         return {
             enabled: false,
-            reason: 'No AI provider configured (set MCP_AI_PROVIDER or provider-specific env vars).',
-        };
-    }
-
-    if (provider === 'gemini') {
-        if (!process.env.GEMINI_API_KEY) {
-            return {
-                enabled: false,
-                provider,
-                reason: 'GEMINI_API_KEY is required for Gemini AI search.',
-            };
-        }
-        return {
-            enabled: true,
-            provider,
-            config: {
-                provider,
-                apiKey: process.env.GEMINI_API_KEY,
-                maxChunks: DEFAULT_MAX_CONTEXT_CHUNKS,
-            },
+            reason: 'No AI provider configured (set MCP_AI_BASE_URL for OpenAI-compatible AI search).',
         };
     }
 
@@ -162,36 +140,12 @@ export async function searchDocumentWithAi(
         throw new Error(selection.reason || 'AI provider not configured.');
     }
 
-    if (selection.provider === 'gemini') {
-        const result = await searchWithGemini(documentId, query, manager, selection.config.apiKey);
-        return {
-            provider: 'gemini',
-            result,
-        };
-    }
-
     const result = await searchWithOpenAi(documentId, query, manager, selection.config);
     return {
         provider: 'openai',
         model: selection.config.model,
         result,
     };
-}
-
-async function searchWithGemini(
-    documentId: string,
-    query: string,
-    manager: DocumentManager,
-    apiKey?: string
-): Promise<AiSearchResult> {
-    const dataDir = manager.getDataDir();
-    const response = await GeminiSearchService.searchDocumentWithGemini(
-        documentId,
-        query,
-        dataDir,
-        apiKey
-    );
-    return parseAiSearchResult(response);
 }
 
 async function searchWithOpenAi(

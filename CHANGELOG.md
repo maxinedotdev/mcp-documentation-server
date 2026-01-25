@@ -1,5 +1,34 @@
 ## [Unreleased]
 
+### Breaking Changes
+
+* **Remove Google Gemini AI provider support**: Removed all Gemini Cloud integration and dependencies
+  - Removed `gemini-search-service.ts` and `gemini-file-mapping-service.ts`
+  - Removed `@google/genai` dependency from package.json
+  - Removed `GEMINI_API_KEY` and `MCP_AI_PROVIDER=gemini` environment variable options
+  - Updated AI provider selection to only support OpenAI-compatible endpoints (LM Studio, synthetic.new)
+  - This change enables fully local/offline workflows and simplifies the codebase
+
+### Migration Instructions
+
+If you were previously using Gemini AI, you must migrate to an OpenAI-compatible provider:
+
+**For local AI (recommended):**
+1. Install LM Studio: https://lmstudio.ai/
+2. Start LM Studio and load a model
+3. Set environment variables:
+   ```
+   MCP_AI_BASE_URL=http://127.0.0.1:1234
+   MCP_AI_MODEL=ministral-3-8b-instruct-2512
+   ```
+
+**For remote AI:**
+1. Set environment variables:
+   ```
+   MCP_AI_BASE_URL=https://api.synthetic.new/openai/v1
+   MCP_AI_API_KEY=your-api-key-here
+   ```
+
 ### Features
 
 * add OpenAI-compatible AI search providers (LM Studio, synthetic.new) with configurable provider selection

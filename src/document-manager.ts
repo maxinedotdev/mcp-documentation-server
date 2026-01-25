@@ -9,7 +9,6 @@ import { IntelligentChunker } from './intelligent-chunker.js';
 import { extractText } from 'unpdf';
 import { getDefaultDataDir, expandHomeDir } from './utils.js';
 import { DocumentIndex } from './indexing/document-index.js';
-import { GeminiFileMappingService } from './gemini-file-mapping-service.js';
 import type { VectorDatabase } from './vector-db/lance-db.js';
 import { createVectorDatabase, migrateFromJson } from './vector-db/index.js';
 
@@ -58,11 +57,6 @@ export class DocumentManager {
         this.ensureDataDir();
         this.ensureUploadsDir();
         console.error('[DocumentManager] Data directories ensured');
-        
-        // Initialize Gemini file mapping service
-        console.error('[DocumentManager] Initializing Gemini file mapping service...');
-        GeminiFileMappingService.initialize(this.dataDir);
-        console.error('[DocumentManager] Gemini file mapping service initialized');
         
         // Initialize indexing with error handling
         if (this.useIndexing) {
@@ -610,22 +604,6 @@ export class DocumentManager {
         const system = 'You are an expert document tagger. Generate relevant tags for the given document. Return only a JSON array of tag strings. Tags should be concise, descriptive, and relevant to the document content. Do not include markdown or extra text.';
         const user = `Document title: ${title}\n\nDocument content:\n${truncatedContent}\n\nGenerate 5-10 relevant tags for this document.`;
 
-        // Check for Gemini provider
-        if (process.env.GEMINI_API_KEY) {
-            try {
-                const { GeminiSearchService } = await import('./gemini-search-service.js');
-                const responseText = await GeminiSearchService.generateTags(
-                    title,
-                    truncatedContent,
-                    process.env.GEMINI_API_KEY
-                );
-                return this.parseTagsFromResponse(responseText);
-            } catch (error) {
-                console.error('[DocumentManager] Failed to generate tags with Gemini:', error);
-                return [];
-            }
-        }
-
         // Check for OpenAI-compatible provider
         const baseUrl = process.env.MCP_AI_BASE_URL;
         const model = process.env.MCP_AI_MODEL;
@@ -965,9 +943,6 @@ export class DocumentManager {
                     // Continue - non-critical error
                 }
             }
-
-            // Remove Gemini file mapping if exists
-            await GeminiFileMappingService.removeMapping(documentId);
 
             return deletedMainFile;
         } catch (error) {

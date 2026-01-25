@@ -11,7 +11,6 @@ import { DocumentManager } from '../document-manager.js';
 import { SearchEngine } from '../search-engine.js';
 import { InMemoryVectorDB, createVectorDatabase } from '../vector-db/index.js';
 import { SimpleEmbeddingProvider } from '../embedding-provider.js';
-import { GeminiFileMappingService } from '../gemini-file-mapping-service.js';
 
 async function testOpenspecValidation() {
     console.log('\n=== Test 12.1: OpenSpec Validation ===');
@@ -315,53 +314,6 @@ async function testEmbeddingProviders() {
     }
 }
 
-async function testGeminiFileMappings() {
-    console.log('\n=== Test 12.5: Gemini File Mappings ===');
-    
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gemini-'));
-    process.env.MCP_BASE_DIR = tempDir;
-    
-    try {
-        const dataDir = path.join(tempDir, 'data');
-        fs.mkdirSync(dataDir, { recursive: true });
-        
-        GeminiFileMappingService.initialize(dataDir);
-        
-        const vectorDB = new InMemoryVectorDB();
-        await vectorDB.initialize();
-        const docManager = new DocumentManager(new SimpleEmbeddingProvider(), vectorDB);
-        
-        const doc = await docManager.addDocument(
-            'Gemini Test Document',
-            'Document for testing Gemini file mappings.',
-            { category: 'test' }
-        );
-        
-        const filePath = path.join(dataDir, `${doc.id}.txt`);
-        fs.writeFileSync(filePath, 'Original file content for Gemini mapping.');
-        
-        await GeminiFileMappingService.addMapping(doc.id, 'gemini-file-123.txt', 'test.txt', 'text/plain');
-        console.log('  ✓ Gemini file mapping added');
-        
-        const hasMapping = GeminiFileMappingService.hasMapping(doc.id);
-        if (!hasMapping) throw new Error('Should have mapping');
-        console.log('  ✓ Gemini file mapping verified');
-        
-        await docManager.deleteDocument(doc.id);
-        const hasMappingAfter = GeminiFileMappingService.hasMapping(doc.id);
-        if (hasMappingAfter) throw new Error('Mapping should be deleted with document');
-        console.log('  ✓ Gemini file mapping removed on document deletion');
-        
-        await vectorDB.close();
-        
-        console.log('✓ Gemini file mappings work correctly');
-        return true;
-    } finally {
-        process.env.MCP_BASE_DIR = undefined;
-        fs.rmSync(tempDir, { recursive: true, force: true });
-    }
-}
-
 async function testDocumentationCrawlerIntegration() {
     console.log('\n=== Test 12.6: Documentation Crawler Integration ===');
     
@@ -467,13 +419,6 @@ async function runValidationTests() {
         results.push({ name: 'Embedding Providers', passed, skipped: false });
     } catch (error) {
         results.push({ name: 'Embedding Providers', passed: false, skipped: false });
-    }
-    
-    try {
-        const passed = await testGeminiFileMappings();
-        results.push({ name: 'Gemini File Mappings', passed, skipped: false });
-    } catch (error) {
-        results.push({ name: 'Gemini File Mappings', passed: false, skipped: false });
     }
     
     try {

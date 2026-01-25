@@ -55,7 +55,6 @@
     "typescript": "^5.8.3"
   },
   "dependencies": {
-    "@google/genai": "^1.19.0",
     "@lancedb/lancedb": "^0.23.0",
     "@modelcontextprotocol/sdk": "^1.12.3",
     "@types/node": "^24.0.1",

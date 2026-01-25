@@ -20,7 +20,7 @@ async function testGeneratedTagsInclusion() {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tags-enabled-'));
     process.env.MCP_BASE_DIR = tempDir;
     process.env.MCP_TAG_GENERATION_ENABLED = 'true';
-    process.env.GEMINI_API_KEY = 'test-key-for-mocking';
+    process.env.MCP_AI_BASE_URL = 'http://127.0.0.1:1234';
     
     try {
         const vectorDB = new InMemoryVectorDB();
@@ -55,7 +55,7 @@ async function testGeneratedTagsInclusion() {
     } finally {
         process.env.MCP_BASE_DIR = undefined;
         process.env.MCP_TAG_GENERATION_ENABLED = undefined;
-        process.env.GEMINI_API_KEY = undefined;
+        process.env.MCP_AI_BASE_URL = undefined;
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
 }
@@ -113,7 +113,7 @@ async function testNonBlockingTagGeneration() {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nonblocking-'));
     process.env.MCP_BASE_DIR = tempDir;
     process.env.MCP_TAG_GENERATION_ENABLED = 'true';
-    process.env.GEMINI_API_KEY = 'test-key';
+    process.env.MCP_AI_BASE_URL = 'http://127.0.0.1:1234';
     
     try {
         const vectorDB = new InMemoryVectorDB();
@@ -150,7 +150,7 @@ async function testNonBlockingTagGeneration() {
     } finally {
         process.env.MCP_BASE_DIR = undefined;
         process.env.MCP_TAG_GENERATION_ENABLED = undefined;
-        process.env.GEMINI_API_KEY = undefined;
+        process.env.MCP_AI_BASE_URL = undefined;
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
 }
@@ -164,7 +164,7 @@ async function testTagGenerationWithDifferentDocumentTypes() {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctypes-'));
     process.env.MCP_BASE_DIR = tempDir;
     process.env.MCP_TAG_GENERATION_ENABLED = 'true';
-    process.env.GEMINI_API_KEY = 'test-key';
+    process.env.MCP_AI_BASE_URL = 'http://127.0.0.1:1234';
     
     try {
         const vectorDB = new InMemoryVectorDB();
@@ -228,7 +228,7 @@ async function testTagGenerationWithDifferentDocumentTypes() {
     } finally {
         process.env.MCP_BASE_DIR = undefined;
         process.env.MCP_TAG_GENERATION_ENABLED = undefined;
-        process.env.GEMINI_API_KEY = undefined;
+        process.env.MCP_AI_BASE_URL = undefined;
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
 }
@@ -242,7 +242,7 @@ async function testGeneratedTagsInQuery() {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'query-tags-'));
     process.env.MCP_BASE_DIR = tempDir;
     process.env.MCP_TAG_GENERATION_ENABLED = 'true';
-    process.env.GEMINI_API_KEY = 'test-key';
+    process.env.MCP_AI_BASE_URL = 'http://127.0.0.1:1234';
     
     try {
         const vectorDB = new InMemoryVectorDB();
@@ -293,7 +293,7 @@ async function testGeneratedTagsInQuery() {
     } finally {
         process.env.MCP_BASE_DIR = undefined;
         process.env.MCP_TAG_GENERATION_ENABLED = undefined;
-        process.env.GEMINI_API_KEY = undefined;
+        process.env.MCP_AI_BASE_URL = undefined;
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
 }
@@ -307,7 +307,7 @@ async function testManualVsGeneratedTags() {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tag-compare-'));
     process.env.MCP_BASE_DIR = tempDir;
     process.env.MCP_TAG_GENERATION_ENABLED = 'true';
-    process.env.GEMINI_API_KEY = 'test-key';
+    process.env.MCP_AI_BASE_URL = 'http://127.0.0.1:1234';
     
     try {
         const vectorDB = new InMemoryVectorDB();
@@ -347,7 +347,7 @@ async function testManualVsGeneratedTags() {
     } finally {
         process.env.MCP_BASE_DIR = undefined;
         process.env.MCP_TAG_GENERATION_ENABLED = undefined;
-        process.env.GEMINI_API_KEY = undefined;
+        process.env.MCP_AI_BASE_URL = undefined;
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
 }
@@ -362,7 +362,7 @@ async function testTagGenerationWithoutApiKey() {
     process.env.MCP_BASE_DIR = tempDir;
     process.env.MCP_TAG_GENERATION_ENABLED = 'true';
     // Explicitly unset API key
-    delete process.env.GEMINI_API_KEY;
+    delete process.env.MCP_AI_BASE_URL;
     
     try {
         const vectorDB = new InMemoryVectorDB();
@@ -392,7 +392,7 @@ async function testTagGenerationWithoutApiKey() {
     } finally {
         process.env.MCP_BASE_DIR = undefined;
         process.env.MCP_TAG_GENERATION_ENABLED = undefined;
-        delete process.env.GEMINI_API_KEY;
+        delete process.env.MCP_AI_BASE_URL;
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
 }
@@ -406,7 +406,7 @@ async function testTagGenerationWithLargeDocuments() {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'large-doc-'));
     process.env.MCP_BASE_DIR = tempDir;
     process.env.MCP_TAG_GENERATION_ENABLED = 'true';
-    process.env.GEMINI_API_KEY = 'test-key';
+    process.env.MCP_AI_BASE_URL = 'http://127.0.0.1:1234';
     
     try {
         const vectorDB = new InMemoryVectorDB();
@@ -445,7 +445,7 @@ async function testTagGenerationWithLargeDocuments() {
     } finally {
         process.env.MCP_BASE_DIR = undefined;
         process.env.MCP_TAG_GENERATION_ENABLED = undefined;
-        process.env.GEMINI_API_KEY = undefined;
+        process.env.MCP_AI_BASE_URL = undefined;
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
 }
@@ -459,7 +459,7 @@ async function testTagGenerationPersistence() {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'persistence-'));
     process.env.MCP_BASE_DIR = tempDir;
     process.env.MCP_TAG_GENERATION_ENABLED = 'true';
-    process.env.GEMINI_API_KEY = 'test-key';
+    process.env.MCP_AI_BASE_URL = 'http://127.0.0.1:1234';
     
     try {
         const vectorDB = new InMemoryVectorDB();
@@ -498,7 +498,7 @@ async function testTagGenerationPersistence() {
     } finally {
         process.env.MCP_BASE_DIR = undefined;
         process.env.MCP_TAG_GENERATION_ENABLED = undefined;
-        process.env.GEMINI_API_KEY = undefined;
+        process.env.MCP_AI_BASE_URL = undefined;
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
 }
