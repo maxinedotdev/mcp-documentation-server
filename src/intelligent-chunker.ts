@@ -44,7 +44,9 @@ export class IntelligentChunker {
     async createChunks(
         documentId: string, 
         content: string, 
-        options: ChunkOptions = {}
+        options: ChunkOptions = {},
+        documentMetadata: Record<string, any> = {},
+        documentTitle: string = ''
     ): Promise<DocumentChunk[]> {
         const contentType = this.detectContentType(content);
         
@@ -60,14 +62,14 @@ export class IntelligentChunker {
         if (useParallel) {
             try {
                 console.error(`[IntelligentChunker] Using parallel processing for large document (${content.length} chars)`);
-                return await this.createChunksParallel(documentId, content, contentType, mergedOptions);
+                return await this.createChunksParallel(documentId, content, contentType, mergedOptions, documentMetadata, documentTitle);
             } catch (error) {
                 console.warn('[IntelligentChunker] Parallel processing failed, falling back to sequential:', error);
                 // Fall through to sequential processing
             }
         }
         
-        return await this.createChunksSequential(documentId, content, contentType, mergedOptions);
+        return await this.createChunksSequential(documentId, content, contentType, mergedOptions, documentMetadata, documentTitle);
     }
 
     /**
@@ -77,7 +79,9 @@ export class IntelligentChunker {
         documentId: string, 
         content: string, 
         contentType: ContentType,
-        options: ChunkOptions
+        options: ChunkOptions,
+        documentMetadata: Record<string, any>,
+        documentTitle: string
     ): Promise<DocumentChunk[]> {
         let chunks: DocumentChunk[];
         
@@ -108,6 +112,9 @@ export class IntelligentChunker {
             chunks = await this.enrichWithContext(chunks, content);
         }
         
+        // Enhance chunks with document metadata (tags, title) for better search
+        chunks = await this.enrichChunksWithMetadata(chunks, documentMetadata, documentTitle);
+        
         console.error(`[IntelligentChunker] Created ${chunks.length} chunks (sequential)`);
         return chunks;
     }
@@ -119,7 +126,9 @@ export class IntelligentChunker {
         documentId: string, 
         content: string, 
         contentType: ContentType,
-        options: ChunkOptions
+        options: ChunkOptions,
+        documentMetadata: Record<string, any>,
+        documentTitle: string
     ): Promise<DocumentChunk[]> {
         const maxWorkers = parseInt(process.env.MCP_MAX_WORKERS || '4');
         
@@ -169,8 +178,12 @@ export class IntelligentChunker {
         // Flatten results
         const chunks = processedBatches.flat();
         
-        console.error(`[IntelligentChunker] Created ${chunks.length} chunks (parallel)`);
-        return chunks;
+        // Enhance chunks with document metadata (tags, title) for better search
+        // Note: This is done after parallel processing to avoid race conditions
+        const enrichedChunks = await this.enrichChunksWithMetadata(chunks, documentMetadata, documentTitle);
+        
+        console.error(`[IntelligentChunker] Created ${enrichedChunks.length} chunks (parallel)`);
+        return enrichedChunks;
     }
 
     /**
@@ -555,15 +568,23 @@ export class IntelligentChunker {
         options: ChunkOptions,
         baseMetadata: Partial<ChunkMetadata>
     ): Promise<DocumentChunk[]> {
+        console.error(`[IntelligentChunker] recursiveChunk START - documentId: ${documentId}, content length: ${content.length}`);
         const chunks: DocumentChunk[] = [];
         const maxSize = options.maxSize || 500;
         const overlap = options.overlap || 50;
-        
+
         if (content.length <= maxSize) {
             // Content fits in one chunk
             console.error(`[IntelligentChunker] Generating embedding for single chunk (${content.length} chars)`);
-            const embeddings = await this.embeddingProvider.generateEmbedding(content);
-            console.error(`[IntelligentChunker] Generated embedding with ${embeddings.length} dimensions`);
+            let embeddings: number[];
+            try {
+                embeddings = await this.embeddingProvider.generateEmbedding(content);
+                console.error(`[IntelligentChunker] Generated embedding with ${embeddings.length} dimensions`);
+            } catch (error) {
+                console.error(`[IntelligentChunker] FAILED to generate embedding for single chunk:`, error);
+                console.error(`[IntelligentChunker] Creating chunk WITHOUT embedding - semantic search will not work for this chunk`);
+                embeddings = [];
+            }
             chunks.push({
                 id: `${documentId}_chunk_0`,
                 document_id: documentId,
@@ -578,32 +599,42 @@ export class IntelligentChunker {
                     complexity_score: this.calculateComplexity(content)
                 } as ChunkMetadata
             });
+            console.error(`[IntelligentChunker] Created single chunk with ${embeddings.length} embedding dimensions`);
             return chunks;
         }
 
         // Use recursive splitting
+        console.error(`[IntelligentChunker] Splitting content into chunks with max size ${maxSize}`);
         const splits = this.splitWithSeparators(content, separators, maxSize);
-        
+        console.error(`[IntelligentChunker] Created ${splits.length} splits`);
+
         let chunkIndex = 0;
         let globalPosition = 0;
-        
+
         for (let i = 0; i < splits.length; i++) {
             const split = splits[i];
             let chunkContent = split;
-            
+
             // Add overlap with previous chunk
             if (i > 0 && overlap > 0) {
                 const prevSplit = splits[i - 1];
                 const overlapText = prevSplit.slice(-overlap);
                 chunkContent = overlapText + ' ' + chunkContent;
             }
-            
+
             console.error(`[IntelligentChunker] Generating embedding for chunk ${i} (${chunkContent.length} chars)`);
-            const embeddings = await this.embeddingProvider.generateEmbedding(chunkContent);
-            console.error(`[IntelligentChunker] Generated embedding for chunk ${i} with ${embeddings.length} dimensions`);
+            let embeddings: number[];
+            try {
+                embeddings = await this.embeddingProvider.generateEmbedding(chunkContent);
+                console.error(`[IntelligentChunker] Generated embedding for chunk ${i} with ${embeddings.length} dimensions`);
+            } catch (error) {
+                console.error(`[IntelligentChunker] FAILED to generate embedding for chunk ${i}:`, error);
+                console.error(`[IntelligentChunker] Creating chunk ${i} WITHOUT embedding - semantic search will not work for this chunk`);
+                embeddings = [];
+            }
             const startPos = globalPosition;
             const endPos = globalPosition + split.length;
-            
+
             chunks.push({
                 id: `${documentId}_chunk_${chunkIndex}`,
                 document_id: documentId,
@@ -619,11 +650,13 @@ export class IntelligentChunker {
                     section: this.extractSection(chunkContent)
                 } as ChunkMetadata
             });
-            
+
+            console.error(`[IntelligentChunker] Created chunk ${chunkIndex} with ${embeddings.length} embedding dimensions`);
             globalPosition = endPos;
             chunkIndex++;
         }
-        
+
+        console.error(`[IntelligentChunker] recursiveChunk END - created ${chunks.length} chunks`);
         return chunks;
     }
 
@@ -773,6 +806,80 @@ export class IntelligentChunker {
             }
         }
         
+        return chunks;
+    }
+
+    /**
+     * Enrich chunks with document metadata (tags, title) for better search
+     * Phase 1 Fix: Store metadata in the metadata field instead of prepending to content
+     * - Fix 1: Store tags in chunk.metadata
+     * - Fix 2: Store headings in chunk.metadata
+     * - Fix 3: Store document title in chunk.metadata
+     * - No embedding regeneration - keeps original embeddings intact
+     */
+    private async enrichChunksWithMetadata(
+        chunks: DocumentChunk[],
+        documentMetadata: Record<string, any>,
+        documentTitle: string
+    ): Promise<DocumentChunk[]> {
+        console.error(`[IntelligentChunker] enrichChunksWithMetadata START - chunks: ${chunks.length}, title: "${documentTitle}"`);
+        console.error(`[IntelligentChunker] enrichChunksWithMetadata - documentMetadata keys: ${Object.keys(documentMetadata).join(', ')}`);
+        
+        // Extract tags from metadata (both regular tags and generated tags)
+        const tags: string[] = [];
+        if (Array.isArray(documentMetadata.tags)) {
+            tags.push(...documentMetadata.tags);
+            console.error(`[IntelligentChunker] enrichChunksWithMetadata - Found ${documentMetadata.tags.length} tags: ${documentMetadata.tags.join(', ')}`);
+        }
+        if (Array.isArray(documentMetadata.tags_generated)) {
+            tags.push(...documentMetadata.tags_generated);
+            console.error(`[IntelligentChunker] enrichChunksWithMetadata - Found ${documentMetadata.tags_generated.length} generated tags: ${documentMetadata.tags_generated.join(', ')}`);
+        }
+        
+        const hasTags = tags.length > 0;
+        const hasTitle = documentTitle && documentTitle.length > 0;
+        
+        console.error(`[IntelligentChunker] enrichChunksWithMetadata - FINAL STATE: tags: ${tags.length}, hasTags: ${hasTags}, hasTitle: ${hasTitle}`);
+        
+        for (const chunk of chunks) {
+            console.error(`[IntelligentChunker] enrichChunksWithMetadata - Processing chunk ${chunk.chunk_index}, has metadata: ${!!chunk.metadata}, has heading: ${!!chunk.metadata?.heading}`);
+            if (chunk.metadata?.heading) {
+                console.error(`[IntelligentChunker] enrichChunksWithMetadata - Chunk heading: "${chunk.metadata.heading}"`);
+            }
+            
+            // Initialize metadata object if not present
+            chunk.metadata = chunk.metadata || {};
+            
+            // Fix 1: Store tags in metadata field
+            if (hasTags) {
+                chunk.metadata.tags = tags;
+                console.error(`[IntelligentChunker] enrichChunksWithMetadata - Stored ${tags.length} tags in metadata`);
+            }
+            
+            // Fix 3: Store document title in metadata field (all chunks need document context)
+            if (hasTitle) {
+                chunk.metadata.document_title = documentTitle;
+                console.error(`[IntelligentChunker] enrichChunksWithMetadata - Stored document title in metadata`);
+            }
+            
+            // Fix 2: Ensure heading is stored in metadata field
+            if (chunk.metadata?.heading) {
+                // Heading already exists in metadata, ensure it's preserved
+                console.error(`[IntelligentChunker] enrichChunksWithMetadata - Preserved existing heading in metadata: "${chunk.metadata.heading}"`);
+            } else if (hasTitle && chunk.chunk_index === 0) {
+                // For first chunk without heading, use document title as heading
+                chunk.metadata.heading = documentTitle;
+                console.error(`[IntelligentChunker] enrichChunksWithMetadata - Set document title as fallback heading: "${documentTitle}"`);
+            }
+            
+            // Mark that metadata was added (but content was not enhanced)
+            chunk.metadata.enhanced_with_metadata = true;
+            
+            console.error(`[IntelligentChunker] enrichChunksWithMetadata - Metadata stored for chunk ${chunk.chunk_index}`);
+            console.error(`[IntelligentChunker] enrichChunksWithMetadata - Original content and embeddings preserved`);
+        }
+        
+        console.error(`[IntelligentChunker] enrichChunksWithMetadata END - metadata stored without content modification or embedding regeneration`);
         return chunks;
     }
 
