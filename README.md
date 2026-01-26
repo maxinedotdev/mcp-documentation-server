@@ -1,6 +1,6 @@
 # MCP Documentation Server
 
-A TypeScript-based [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that provides local-first document management and semantic search using embeddings. The server exposes a collection of MCP tools and uses on-disk persistence, an in-memory index, caching, and LanceDB vector storage by default with an in-memory fallback.
+A TypeScript-based [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that provides local-first document management and semantic search using embeddings. The server exposes a collection of MCP tools and uses on-disk persistence, an in-memory index, caching, and LanceDB vector storage.
 
 ## LLM-assisted analysis (optional)
 
@@ -50,7 +50,6 @@ Example configuration for an MCP client (e.g., Claude Desktop):
       ],
       "env": {
             "MCP_BASE_DIR": "/path/to/workspace",  // Optional, custom data directory (default: ~/.saga)
-            "MCP_VECTOR_DB": "lance",  // Optional, "lance" (default) or "memory" (legacy in-memory)
             "MCP_LANCE_DB_PATH": "~/.data/lancedb",  // Optional, custom LanceDB path (default: {dataDir}/lancedb)
             "MCP_EMBEDDING_PROVIDER": "transformers",  // Optional, "transformers" or "openai"
             "MCP_EMBEDDING_MODEL": "Xenova/all-MiniLM-L6-v2",
@@ -300,27 +299,15 @@ The server exposes several tools (validated with Zod schemas) for document lifec
 Configure behavior via environment variables. Important options:
 
 ### Vector Database Configuration
-- `MCP_VECTOR_DB` — vector database selection: `lance` (default, LanceDB) or `memory` (legacy in-memory).
 - `MCP_LANCE_DB_PATH` — custom path for LanceDB storage (default: `{dataDir}/lancedb`).
 
 **LanceDB characteristics**:
 - Disk-based vector search with HNSW indexing
-- Scales better than in-memory as the dataset grows
+- Scales well as the dataset grows
 - Lower memory usage during queries
 - Metadata filtering support
 - Automatic migration of existing JSON documents on first use
 - Local-first storage (no external server required)
-
-**When to use LanceDB**:
-- Larger document sets
-- Frequent search queries
-- Metadata filtering
-- Limited system memory
-
-**When to use in-memory**:
-- Small document sets
-- Simple setup without additional storage
-- Testing and development
 
 ### General Configuration
 - `MCP_BASE_DIR` — base directory for data storage (default: `~/.saga`). Supports `~` expansion for the home directory.
@@ -365,7 +352,6 @@ Example `.env` (defaults applied when variables are not set):
 
 ```env
 # Vector Database Configuration
-MCP_VECTOR_DB=lance               # "lance" (default) or "memory" (legacy)
 MCP_LANCE_DB_PATH=~/.data/lancedb  # Custom LanceDB path (optional)
 
 # Base Directory
@@ -431,20 +417,11 @@ rm -rf ~/.saga/lancedb
 # Restart your MCP server - migration will run automatically
 ```
 
-### Rollback to In-Memory
-To switch back to in-memory storage:
-
-```bash
-# Set environment variable
-export MCP_VECTOR_DB=memory
-# Restart your MCP server
-```
-
 ### Data Integrity
 - **JSON files are preserved**: Original documents remain in `data/` directory
 - **Embeddings are cached**: No need to regenerate embeddings
 - **Atomic operations**: Migration is transaction-safe
-- **Error handling**: If migration fails, system falls back to in-memory
+- **Error handling**: If migration fails, an error is logged and migration can be retried
 
 ## Usage examples
 

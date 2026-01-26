@@ -7,8 +7,12 @@ import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+
+const getTempDir = (): string => {
+    return fs.mkdtempSync(path.join(os.tmpdir(), `test-${Date.now()}-`));
+};
 import { DocumentManager } from '../document-manager.js';
-import { InMemoryVectorDB } from '../vector-db/index.js';
+import { LanceDBAdapter } from '../vector-db/index.js';
 import { SimpleEmbeddingProvider } from '../embedding-provider.js';
 import { QueryResponse, DocumentDiscoveryResult } from '../types.js';
 
@@ -22,7 +26,7 @@ async function testQueryPaginationEndToEnd() {
     process.env.MCP_BASE_DIR = tempDir;
     
     try {
-        const vectorDB = new InMemoryVectorDB();
+        const vectorDB = new LanceDBAdapter(getTempDir());
         await vectorDB.initialize();
         
         const documentManager = new DocumentManager(new SimpleEmbeddingProvider(), vectorDB);
@@ -128,7 +132,7 @@ async function testResponseShapeConsistency() {
     process.env.MCP_BASE_DIR = tempDir;
     
     try {
-        const vectorDB = new InMemoryVectorDB();
+        const vectorDB = new LanceDBAdapter(getTempDir());
         await vectorDB.initialize();
         
         const documentManager = new DocumentManager(new SimpleEmbeddingProvider(), vectorDB);
@@ -220,7 +224,7 @@ async function testMetadataFilteringEndToEnd() {
     process.env.MCP_BASE_DIR = tempDir;
     
     try {
-        const vectorDB = new InMemoryVectorDB();
+        const vectorDB = new LanceDBAdapter(getTempDir());
         await vectorDB.initialize();
         
         const documentManager = new DocumentManager(new SimpleEmbeddingProvider(), vectorDB);
@@ -326,7 +330,7 @@ async function testQueryWithLargeDataset() {
     process.env.MCP_BASE_DIR = tempDir;
     
     try {
-        const vectorDB = new InMemoryVectorDB();
+        const vectorDB = new LanceDBAdapter(getTempDir());
         await vectorDB.initialize();
         
         const documentManager = new DocumentManager(new SimpleEmbeddingProvider(), vectorDB);
@@ -396,7 +400,7 @@ async function testQueryWithDocumentDeletion() {
     process.env.MCP_BASE_DIR = tempDir;
     
     try {
-        const vectorDB = new InMemoryVectorDB();
+        const vectorDB = new LanceDBAdapter(getTempDir());
         await vectorDB.initialize();
         
         const documentManager = new DocumentManager(new SimpleEmbeddingProvider(), vectorDB);
@@ -461,7 +465,7 @@ async function testQueryWithCrawlSessionDeletion() {
     process.env.MCP_BASE_DIR = tempDir;
     
     try {
-        const vectorDB = new InMemoryVectorDB();
+        const vectorDB = new LanceDBAdapter(getTempDir());
         await vectorDB.initialize();
         
         const documentManager = new DocumentManager(new SimpleEmbeddingProvider(), vectorDB);
@@ -532,7 +536,7 @@ async function testQueryEdgeCases() {
     process.env.MCP_BASE_DIR = tempDir;
     
     try {
-        const vectorDB = new InMemoryVectorDB();
+        const vectorDB = new LanceDBAdapter(getTempDir());
         await vectorDB.initialize();
         
         const documentManager = new DocumentManager(new SimpleEmbeddingProvider(), vectorDB);

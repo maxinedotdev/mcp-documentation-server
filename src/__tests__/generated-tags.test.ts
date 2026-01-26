@@ -7,8 +7,12 @@ import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+
+const getTempDir = (): string => {
+    return fs.mkdtempSync(path.join(os.tmpdir(), `test-${Date.now()}-`));
+};
 import { DocumentManager } from '../document-manager.js';
-import { InMemoryVectorDB } from '../vector-db/index.js';
+import { LanceDBAdapter } from '../vector-db/index.js';
 import { SimpleEmbeddingProvider } from '../embedding-provider.js';
 
 /**
@@ -23,7 +27,7 @@ async function testGeneratedTagsInclusion() {
     process.env.MCP_AI_BASE_URL = 'http://127.0.0.1:1234';
     
     try {
-        const vectorDB = new InMemoryVectorDB();
+        const vectorDB = new LanceDBAdapter(getTempDir());
         await vectorDB.initialize();
         
         const documentManager = new DocumentManager(new SimpleEmbeddingProvider(), vectorDB);
@@ -71,7 +75,7 @@ async function testGeneratedTagsDisabled() {
     process.env.MCP_TAG_GENERATION_ENABLED = 'false';
     
     try {
-        const vectorDB = new InMemoryVectorDB();
+        const vectorDB = new LanceDBAdapter(getTempDir());
         await vectorDB.initialize();
         
         const documentManager = new DocumentManager(new SimpleEmbeddingProvider(), vectorDB);
@@ -116,7 +120,7 @@ async function testNonBlockingTagGeneration() {
     process.env.MCP_AI_BASE_URL = 'http://127.0.0.1:1234';
     
     try {
-        const vectorDB = new InMemoryVectorDB();
+        const vectorDB = new LanceDBAdapter(getTempDir());
         await vectorDB.initialize();
         
         const documentManager = new DocumentManager(new SimpleEmbeddingProvider(), vectorDB);
@@ -167,7 +171,7 @@ async function testTagGenerationWithDifferentDocumentTypes() {
     process.env.MCP_AI_BASE_URL = 'http://127.0.0.1:1234';
     
     try {
-        const vectorDB = new InMemoryVectorDB();
+        const vectorDB = new LanceDBAdapter(getTempDir());
         await vectorDB.initialize();
         
         const documentManager = new DocumentManager(new SimpleEmbeddingProvider(), vectorDB);
@@ -245,7 +249,7 @@ async function testGeneratedTagsInQuery() {
     process.env.MCP_AI_BASE_URL = 'http://127.0.0.1:1234';
     
     try {
-        const vectorDB = new InMemoryVectorDB();
+        const vectorDB = new LanceDBAdapter(getTempDir());
         await vectorDB.initialize();
         
         const documentManager = new DocumentManager(new SimpleEmbeddingProvider(), vectorDB);
@@ -310,7 +314,7 @@ async function testManualVsGeneratedTags() {
     process.env.MCP_AI_BASE_URL = 'http://127.0.0.1:1234';
     
     try {
-        const vectorDB = new InMemoryVectorDB();
+        const vectorDB = new LanceDBAdapter(getTempDir());
         await vectorDB.initialize();
         
         const documentManager = new DocumentManager(new SimpleEmbeddingProvider(), vectorDB);
@@ -365,7 +369,7 @@ async function testTagGenerationWithoutApiKey() {
     delete process.env.MCP_AI_BASE_URL;
     
     try {
-        const vectorDB = new InMemoryVectorDB();
+        const vectorDB = new LanceDBAdapter(getTempDir());
         await vectorDB.initialize();
         
         const documentManager = new DocumentManager(new SimpleEmbeddingProvider(), vectorDB);
@@ -409,7 +413,7 @@ async function testTagGenerationWithLargeDocuments() {
     process.env.MCP_AI_BASE_URL = 'http://127.0.0.1:1234';
     
     try {
-        const vectorDB = new InMemoryVectorDB();
+        const vectorDB = new LanceDBAdapter(getTempDir());
         await vectorDB.initialize();
         
         const documentManager = new DocumentManager(new SimpleEmbeddingProvider(), vectorDB);
@@ -462,7 +466,7 @@ async function testTagGenerationPersistence() {
     process.env.MCP_AI_BASE_URL = 'http://127.0.0.1:1234';
     
     try {
-        const vectorDB = new InMemoryVectorDB();
+        const vectorDB = new LanceDBAdapter(getTempDir());
         await vectorDB.initialize();
         
         const documentManager = new DocumentManager(new SimpleEmbeddingProvider(), vectorDB);
@@ -478,7 +482,7 @@ async function testTagGenerationPersistence() {
         await new Promise(resolve => setTimeout(resolve, 100));
         
         // Create new DocumentManager instance (simulating restart)
-        const vectorDB2 = new InMemoryVectorDB();
+        const vectorDB2 = new LanceDBAdapter(getTempDir());
         await vectorDB2.initialize();
         const documentManager2 = new DocumentManager(new SimpleEmbeddingProvider(), vectorDB2);
         

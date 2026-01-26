@@ -1,10 +1,9 @@
 /**
  * Vector Database Abstraction Layer
  * 
- * This module provides a unified interface for vector database operations,
- * allowing different implementations (LanceDB, in-memory, etc.) to be used
- * interchangeably.
+ * This module provides a unified interface for vector database operations
+ * using LanceDB as the single, supported backend.
  */
 
-export { LanceDBAdapter, InMemoryVectorDB, createVectorDatabase } from './lance-db.js';
+export { LanceDBAdapter, createVectorDatabase } from './lance-db.js';
 export { migrateFromJson } from './migrate.js';

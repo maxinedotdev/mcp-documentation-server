@@ -29,7 +29,7 @@ export class DocumentManager {
     private useStreaming: boolean;
     private useTagGeneration: boolean;
     private useGeneratedTagsInQuery: boolean;
-    
+
     constructor(embeddingProvider?: EmbeddingProvider, vectorDatabase?: VectorDatabase) {
         console.error('[DocumentManager] Constructor START');
         const startTime = Date.now();
@@ -39,14 +39,14 @@ export class DocumentManager {
         this.dataDir = path.join(baseDir, 'data');
         this.uploadsDir = path.join(baseDir, 'uploads');
         console.error(`[DocumentManager] Data dir: ${this.dataDir}, Uploads dir: ${this.uploadsDir}`);
-        
+
         this.embeddingProvider = embeddingProvider || new SimpleEmbeddingProvider();
         this.intelligentChunker = new IntelligentChunker(this.embeddingProvider);
         console.error(`[DocumentManager] Embedding provider initialized`);
-        
+
         // Feature flags with fallback
         this.useIndexing = process.env.MCP_INDEXING_ENABLED !== 'false';
-        this.useVectorDb = process.env.MCP_VECTOR_DB !== 'inmemory';
+        this.useVectorDb = process.env.MCP_VECTOR_DB !== 'false';
         this.useParallelProcessing = process.env.MCP_PARALLEL_ENABLED !== 'false';
         this.useStreaming = process.env.MCP_STREAMING_ENABLED !== 'false';
         this.useTagGeneration = process.env.MCP_TAG_GENERATION_ENABLED === 'true';
@@ -92,14 +92,13 @@ export class DocumentManager {
     }
 
     /**
-     * Create and initialize vector database instance
+     * Create and initialize LanceDB vector database instance
      */
     private createVectorDatabase(): VectorDatabase {
-        const dbType = process.env.MCP_VECTOR_DB || 'lance';
         const dbPathEnv = process.env.MCP_LANCE_DB_PATH;
         const defaultDataDir = getDefaultDataDir();
         const dbPath = dbPathEnv ? expandHomeDir(dbPathEnv) : path.join(defaultDataDir, 'lancedb');
-        return createVectorDatabase(dbType, dbPath);
+        return createVectorDatabase(dbPath);
     }
 
     /**
@@ -488,7 +487,7 @@ export class DocumentManager {
         // Get similarity threshold from environment variable
         const similarityThreshold = parseFloat(process.env.MCP_SIMILARITY_THRESHOLD || '0.0');
 
-        // Use vector database if available
+        // Use vector database (LanceDB is now the only supported backend)
         if (this.useVectorDb && this.vectorDatabase) {
             try {
                 const results = await this.vectorDatabase.search(
@@ -499,28 +498,12 @@ export class DocumentManager {
                 // Filter by similarity threshold
                 return results.filter(result => result.score >= similarityThreshold);
             } catch (error) {
-                console.warn('[DocumentManager] Vector database search failed, falling back to in-memory:', error);
-                // Fall through to in-memory search
+                console.error('[DocumentManager] Vector database search failed:', error);
+                throw new Error(`Failed to search documents: ${error}`);
             }
         }
 
-        // Fallback to in-memory search
-        const document = await this.getDocument(documentId);
-        if (!document) {
-            return [];
-        }
-
-        const results: SearchResult[] = document.chunks
-            .filter(chunk => chunk.embeddings && chunk.embeddings.length > 0)
-            .map(chunk => ({
-                chunk,
-                score: this.cosineSimilarity(queryEmbedding, chunk.embeddings!)
-            }))
-            .filter(result => result.score >= similarityThreshold)
-            .sort((a, b) => b.score - a.score)
-            .slice(0, limit);
-
-        return results;
+        throw new Error('Vector database is not enabled. Set MCP_VECTOR_DB=true to enable vector search.');
     }
 
     private cosineSimilarity(a: number[], b: number[]): number {
@@ -1236,7 +1219,7 @@ export class DocumentManager {
 
         if (this.useVectorDb && this.vectorDatabase) {
             stats.vectorDatabase = {
-                type: process.env.MCP_VECTOR_DB || 'lance',
+                type: 'lance',
                 path: process.env.MCP_LANCE_DB_PATH || 'default'
             };
         }

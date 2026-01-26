@@ -8,8 +8,12 @@ import * as path from 'path';
 import * as os from 'os';
 import { DocumentManager } from '../document-manager.js';
 import { SearchEngine } from '../search-engine.js';
-import { InMemoryVectorDB, createVectorDatabase } from '../vector-db/index.js';
+import { createVectorDatabase, LanceDBAdapter } from '../vector-db/index.js';
 import { SimpleEmbeddingProvider } from '../embedding-provider.js';
+
+const getTempDir = (): string => {
+    return fs.mkdtempSync(path.join(os.tmpdir(), `test-${Date.now()}-`));
+};
 
 async function testDocumentManagerIntegration() {
     console.log('\n=== Test 9.4: DocumentManager Integration ===');
@@ -18,7 +22,7 @@ async function testDocumentManagerIntegration() {
     process.env.MCP_BASE_DIR = tempDir;
     
     try {
-        const vectorDB = new InMemoryVectorDB();
+        const vectorDB = new LanceDBAdapter(getTempDir());
         await vectorDB.initialize();
         
         const documentManager = new DocumentManager(new SimpleEmbeddingProvider(), vectorDB);
@@ -109,7 +113,7 @@ async function testSearchEngineIntegration() {
     process.env.MCP_BASE_DIR = tempDir;
     
     try {
-        const vectorDB = new InMemoryVectorDB();
+        const vectorDB = new LanceDBAdapter(getTempDir());
         await vectorDB.initialize();
         
         const embeddingProvider = new SimpleEmbeddingProvider();
@@ -210,7 +214,7 @@ async function testMigration() {
         console.log(`  Created 10 test documents in ${dataDir}`);
         
         const { migrateFromJson } = await import('../vector-db/index.js');
-        const vectorDB = createVectorDatabase('lance', lanceDir);
+        const vectorDB = createVectorDatabase(lanceDir);
         
         try {
             await vectorDB.initialize();

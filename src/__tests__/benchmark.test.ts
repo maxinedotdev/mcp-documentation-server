@@ -6,7 +6,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { InMemoryVectorDB, LanceDBAdapter, createVectorDatabase } from '../vector-db/index.js';
+import { LanceDBAdapter, createVectorDatabase } from '../vector-db/index.js';
 import { DocumentChunk } from '../types.js';
 
 interface BenchmarkResult {
@@ -140,36 +140,6 @@ async function benchmarkDocumentCounts() {
         console.log(`\n  📊 Benchmarking ${count} documents`);
         const chunks = createTestDocuments(count);
         
-        console.log(`  \n  Memory DB:`);
-        const memoryDB = new InMemoryVectorDB();
-        await memoryDB.initialize();
-        
-        const addMemoryTime = await runBenchmark(
-            'addChunks',
-            'memory',
-            count,
-            3,
-            async () => {
-                await memoryDB.addChunks(chunks);
-            }
-        );
-        console.log(`    Add: ${addMemoryTime.toFixed(2)}ms`);
-        
-        await benchmarkSearchPerformance(memoryDB, 'memory', chunks);
-        
-        const removeMemoryTime = await runBenchmark(
-            'removeChunks',
-            'memory',
-            count,
-            1,
-            async () => {
-                await memoryDB.removeChunks('bench-doc-0');
-            }
-        );
-        console.log(`    Remove: ${removeMemoryTime.toFixed(2)}ms`);
-        
-        await memoryDB.close();
-        
         try {
             await import('@lancedb/lancedb');
             const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `lance-bench-${count}-`));
@@ -210,55 +180,32 @@ async function benchmarkDocumentCounts() {
     }
 }
 
-async function compareDatabaseTypes() {
-    console.log('\n=== Test 10.3: Compare Database Types ===');
+async function measurePerformanceAtScale() {
+    console.log('\n=== Test 10.3: Measure Performance at Different Scales ===');
     
     const documentCounts = [50, 100, 200];
     
-    console.log('\n  📊 Performance Comparison Table');
+    console.log('\n  📊 Performance Table');
     console.log('  ┌────────────┬──────────────┬─────────────────┬─────────────────┐');
-    console.log('  │ Documents  │ Operation    │ Memory (ms)     │ LanceDB (ms)    │');
+    console.log('  │ Documents  │ Operation    │ Avg Time (ms)   │ Min Time (ms)   │');
     console.log('  ├────────────┼──────────────┼─────────────────┼─────────────────┤');
     
     for (const count of documentCounts) {
         const chunks = createTestDocuments(count);
         
-        const memoryDB = new InMemoryVectorDB();
-        await memoryDB.initialize();
-        
-        const memoryAddTime = await runBenchmark(
-            'addChunks',
-            'memory',
-            count,
-            3,
-            async () => {
-                await memoryDB.addChunks(chunks);
-            }
-        );
-        
-        const memorySearchTime = await runBenchmark(
-            'search',
-            'memory',
-            count,
-            5,
-            async () => {
-                await memoryDB.search(createTestEmbedding(Math.random() * count), 5);
-            }
-        );
-        
-        await memoryDB.close();
-        
-        let lanceAddTime = 0;
-        let lanceSearchTime = 0;
+        let addTime = 0;
+        let searchTime = 0;
+        let minAddTime = 0;
+        let minSearchTime = 0;
         
         try {
             await import('@lancedb/lancedb');
             
-            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lance-compare-'));
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lance-scale-'));
             const lanceDB = new LanceDBAdapter(tempDir);
             await lanceDB.initialize();
             
-            lanceAddTime = await runBenchmark(
+            addTime = await runBenchmark(
                 'addChunks',
                 'lance',
                 count,
@@ -268,7 +215,7 @@ async function compareDatabaseTypes() {
                 }
             );
             
-            lanceSearchTime = await runBenchmark(
+            searchTime = await runBenchmark(
                 'search',
                 'lance',
                 count,
@@ -278,18 +225,24 @@ async function compareDatabaseTypes() {
                 }
             );
             
+            // Get min times from results
+            const addResults = benchmarkResults.addChunks.filter(r => r.documentCount === count && r.dbType === 'lance');
+            const searchResults = benchmarkResults.search.filter(r => r.documentCount === count && r.dbType === 'lance');
+            if (addResults.length > 0) minAddTime = addResults[addResults.length - 1].minTimeMs;
+            if (searchResults.length > 0) minSearchTime = searchResults[searchResults.length - 1].minTimeMs;
+            
             await lanceDB.close();
             fs.rmSync(tempDir, { recursive: true, force: true });
         } catch {
-            lanceAddTime = 0;
-            lanceSearchTime = 0;
+            console.log(`  │ ${count.toString().padEnd(10)} │ N/A          │ N/A             │ N/A             │`);
+            continue;
         }
         
         console.log(
-            `  │ ${count.toString().padEnd(10)} │ Add          │ ${memoryAddTime.toFixed(2).padEnd(15)} │ ${lanceAddTime > 0 ? lanceAddTime.toFixed(2).padEnd(15) : 'N/A'.padEnd(15)} │`
+            `  │ ${count.toString().padEnd(10)} │ Add          │ ${addTime.toFixed(2).padEnd(15)} │ ${minAddTime.toFixed(2).padEnd(15)} │`
         );
         console.log(
-            `  │ ${count.toString().padEnd(10)} │ Search       │ ${memorySearchTime.toFixed(2).padEnd(15)} │ ${lanceSearchTime > 0 ? lanceSearchTime.toFixed(2).padEnd(15) : 'N/A'.padEnd(15)} │`
+            `  │ ${count.toString().padEnd(10)} │ Search       │ ${searchTime.toFixed(2).padEnd(15)} │ ${minSearchTime.toFixed(2).padEnd(15)} │`
         );
         
         if (documentCounts.indexOf(count) < documentCounts.length - 1) {
@@ -306,22 +259,12 @@ async function measureMemoryUsage() {
     const documentCounts = [50, 100, 200, 500];
     
     console.log('\n  📊 Memory Usage Table');
-    console.log('  ┌────────────┬──────────────────┬──────────────────┐');
-    console.log('  │ Documents  │ Memory DB (MB)   │ LanceDB (MB)     │');
-    console.log('  ├────────────┼──────────────────┼─────────────────┤');
+    console.log('  ┌────────────┬──────────────────┐');
+    console.log('  │ Documents  │ LanceDB (MB)     │');
+    console.log('  ├────────────┼──────────────────┤');
     
     for (const count of documentCounts) {
         const chunks = createTestDocuments(count);
-        
-        const memoryDB = new InMemoryVectorDB();
-        await memoryDB.initialize();
-        
-        const memoryBefore = measureMemory();
-        await memoryDB.addChunks(chunks);
-        const memoryAfter = measureMemory();
-        const memoryUsage = memoryAfter - memoryBefore;
-        
-        await memoryDB.close();
         
         let lanceUsage = 0;
         
@@ -344,15 +287,15 @@ async function measureMemoryUsage() {
         }
         
         console.log(
-            `  │ ${count.toString().padEnd(10)} │ ${memoryUsage.toFixed(2).padEnd(16)} │ ${lanceUsage > 0 ? lanceUsage.toFixed(2).padEnd(16) : 'N/A'.padEnd(16)} │`
+            `  │ ${count.toString().padEnd(10)} │ ${lanceUsage > 0 ? lanceUsage.toFixed(2).padEnd(16) : 'N/A'.padEnd(16)} │`
         );
         
         if (documentCounts.indexOf(count) < documentCounts.length - 1) {
-            console.log('  ├────────────┼──────────────────┼──────────────────┤');
+            console.log('  ├────────────┼──────────────────┤');
         }
     }
     
-    console.log('  └────────────┴──────────────────┴──────────────────┘');
+    console.log('  └────────────┴──────────────────┘');
 }
 
 function documentPerformanceRecommendations() {
@@ -364,22 +307,20 @@ function documentPerformanceRecommendations() {
   Based on benchmarking results:
 
   1. Database Selection:
-     • InMemoryVectorDB: Fast for small datasets (< 100 documents), simpler setup
-     • LanceDB: Better for larger datasets (100+ documents), persistent storage
+     • LanceDB: The supported vector database for all use cases
 
   2. Scale Considerations:
-     • < 50 documents: Both databases perform well
-     • 50-200 documents: LanceDB shows benefits for search operations
-     • > 200 documents: LanceDB recommended for consistent performance
+     • < 50 documents: Fast performance, low overhead
+     • 50-200 documents: Good performance with efficient indexing
+     • > 200 documents: Consistent performance with disk-based storage
 
   3. Memory Usage:
-     • InMemoryVectorDB: All data in RAM, scales linearly with document count
-     • LanceDB: Disk-based, more efficient for large datasets
+     • LanceDB: Disk-based storage, efficient for large datasets
 
   4. Configuration Recommendations:
-     • Use MCP_VECTOR_DB=memory for testing and small deployments
-     • Use MCP_VECTOR_DB=lance for production with 100+ documents
+     • Use MCP_LANCE_DB_PATH to specify custom storage location
      • Set MCP_LANCE_DB_PATH to fast storage (SSD recommended)
+     • Vector database is enabled by default (use MCP_VECTOR_DB_ENABLED=true)
 
   5. Performance Optimization:
      • Batch insertions when adding multiple documents
@@ -393,7 +334,6 @@ function documentPerformanceRecommendations() {
      • Keep JSON backups until migration is verified
 
   7. Monitoring:
-     • Monitor memory usage for InMemoryVectorDB deployments
      • Monitor disk I/O for LanceDB deployments
      • Use getStats() method to check cache and indexing status
 
@@ -403,8 +343,8 @@ function documentPerformanceRecommendations() {
      • Delete operation: 1-10ms
      • Migration: 100-500 documents per minute
 
-  Note: Actual performance depends on hardware, content size, and configuration.
-  `);
+   Note: Actual performance depends on hardware, content size, and configuration.
+   `);
 }
 
 function printBenchmarkResults() {
@@ -439,7 +379,7 @@ async function runPerformanceBenchmarks() {
     
     try {
         await benchmarkDocumentCounts();
-        await compareDatabaseTypes();
+        await measurePerformanceAtScale();
         await measureMemoryUsage();
         documentPerformanceRecommendations();
         printBenchmarkResults();

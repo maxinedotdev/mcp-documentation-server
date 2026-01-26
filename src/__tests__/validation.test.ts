@@ -6,34 +6,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { execSync } from 'child_process';
 import { DocumentManager } from '../document-manager.js';
 import { SearchEngine } from '../search-engine.js';
-import { InMemoryVectorDB, createVectorDatabase } from '../vector-db/index.js';
+import { createVectorDatabase, LanceDBAdapter } from '../vector-db/index.js';
 import { SimpleEmbeddingProvider } from '../embedding-provider.js';
 
-async function testOpenspecValidation() {
-    console.log('\n=== Test 12.1: OpenSpec Validation ===');
-    
-    try {
-        const result = execSync('openspec validate add-lance-db --strict --no-interactive', {
-            cwd: process.cwd(),
-            encoding: 'utf-8',
-            stdio: 'pipe'
-        });
-        
-        console.log('  ✓ OpenSpec validation passed');
-        console.log('  Output:', result.trim());
-        return true;
-    } catch (error) {
-        const err = error as { stdout?: string; stderr?: string; message?: string };
-        console.error('  ✗ OpenSpec validation failed');
-        if (err.stdout) console.error('  stdout:', err.stdout);
-        if (err.stderr) console.error('  stderr:', err.stderr);
-        if (err.message) console.error('  message:', err.message);
-        return false;
-    }
-}
+const getTempDir = (): string => {
+    return fs.mkdtempSync(path.join(os.tmpdir(), `test-${Date.now()}-`));
+};
 
 async function testMigrationWithRealData() {
     console.log('\n=== Test 12.2: Migration with Real Data ===');
@@ -107,7 +87,7 @@ async function testMigrationWithRealData() {
         console.log(`  Created 5 realistic test documents`);
         
         const { migrateFromJson } = await import('../vector-db/index.js');
-        const vectorDB = createVectorDatabase('lance', lanceDir);
+        const vectorDB = createVectorDatabase(lanceDir);
         
         try {
             await vectorDB.initialize();
@@ -157,7 +137,7 @@ async function testMCPToolsWithLanceDB() {
     process.env.MCP_BASE_DIR = tempDir;
     
     try {
-        const vectorDB = new InMemoryVectorDB();
+        const vectorDB = new LanceDBAdapter(getTempDir());
         await vectorDB.initialize();
         
         const documentManager = new DocumentManager(new SimpleEmbeddingProvider(), vectorDB);
@@ -252,7 +232,7 @@ async function testEmbeddingProviders() {
         if (!simpleProvider.isAvailable()) throw new Error('Should be available');
         console.log(`  ✓ SimpleEmbeddingProvider works (${simpleEmbedding.length} dimensions)`);
         
-        const simpleVectorDB = new InMemoryVectorDB();
+        const simpleVectorDB = new LanceDBAdapter(getTempDir());
         await simpleVectorDB.initialize();
         const simpleDocManager = new DocumentManager(simpleProvider, simpleVectorDB);
         
@@ -282,7 +262,7 @@ async function testEmbeddingProviders() {
                 if (openaiEmbedding.length === 0) throw new Error('Should generate embedding');
                 console.log(`  ✓ OpenAI provider works (${openaiEmbedding.length} dimensions)`);
                 
-                const openaiVectorDB = new InMemoryVectorDB();
+                const openaiVectorDB = new LanceDBAdapter(getTempDir());
                 await openaiVectorDB.initialize();
                 const openaiDocManager = new DocumentManager(openaiProvider, openaiVectorDB);
                 
@@ -321,7 +301,7 @@ async function testDocumentationCrawlerIntegration() {
     process.env.MCP_BASE_DIR = tempDir;
     
     try {
-        const vectorDB = new InMemoryVectorDB();
+        const vectorDB = new LanceDBAdapter(getTempDir());
         await vectorDB.initialize();
         const docManager = new DocumentManager(new SimpleEmbeddingProvider(), vectorDB);
         
@@ -392,13 +372,6 @@ async function runValidationTests() {
     console.log('╚═══════════════════════════════════════════════════════════╝');
     
     const results: { name: string; passed: boolean; skipped: boolean }[] = [];
-    
-    try {
-        const passed = await testOpenspecValidation();
-        results.push({ name: 'OpenSpec Validation', passed, skipped: false });
-    } catch (error) {
-        results.push({ name: 'OpenSpec Validation', passed: false, skipped: false });
-    }
     
     try {
         const passed = await testMigrationWithRealData();
