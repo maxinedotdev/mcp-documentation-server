@@ -199,8 +199,9 @@ export class LanceDBAdapter implements VectorDatabase {
 
             // Create table on first data insertion if it doesn't exist
             if (!this.table) {
+                const orderedChunks = this.prioritizeChunkForSchemaInference(chunks, metadataSchemaKeys);
                 logger.info(`Creating table '${this.tableName}' with ${chunks.length} initial chunks`);
-                const data = chunks.map(chunk => ({
+                const data = orderedChunks.map(chunk => ({
                     id: chunk.id,
                     document_id: chunk.document_id,
                     chunk_index: chunk.chunk_index,
@@ -368,6 +369,9 @@ export class LanceDBAdapter implements VectorDatabase {
         for (const chunk of chunks) {
             if (!chunk.metadata) continue;
             for (const [key, value] of Object.entries(chunk.metadata)) {
+                if (key === 'surrounding_context' || key === 'semantic_topic') {
+                    continue;
+                }
                 const sanitized = this.sanitizeMetadataValue(value);
                 if (sanitized !== null && sanitized !== undefined) {
                     keys.add(key);
@@ -375,6 +379,51 @@ export class LanceDBAdapter implements VectorDatabase {
             }
         }
         return keys;
+    }
+
+    private prioritizeChunkForSchemaInference(
+        chunks: DocumentChunk[],
+        metadataSchemaKeys: Set<string> | null
+    ): DocumentChunk[] {
+        if (!metadataSchemaKeys || metadataSchemaKeys.size === 0 || chunks.length <= 1) {
+            return chunks;
+        }
+
+        let bestIndex = 0;
+        let bestScore = -1;
+
+        for (let i = 0; i < chunks.length; i += 1) {
+            const metadata = chunks[i].metadata;
+            if (!metadata) continue;
+
+            let score = 0;
+            for (const key of metadataSchemaKeys) {
+                if (!Object.prototype.hasOwnProperty.call(metadata, key)) {
+                    continue;
+                }
+                const value = this.sanitizeMetadataValue(metadata[key]);
+                if (value !== null && value !== undefined) {
+                    score += 1;
+                }
+            }
+
+            if (score > bestScore) {
+                bestScore = score;
+                bestIndex = i;
+                if (score === metadataSchemaKeys.size) {
+                    break;
+                }
+            }
+        }
+
+        if (bestIndex === 0) {
+            return chunks;
+        }
+
+        const reordered = chunks.slice();
+        const [bestChunk] = reordered.splice(bestIndex, 1);
+        reordered.unshift(bestChunk);
+        return reordered;
     }
 
     private normalizeMetadata(
@@ -389,6 +438,9 @@ export class LanceDBAdapter implements VectorDatabase {
         const normalized: Record<string, any> = {};
 
         for (const key of keys) {
+            if (key === 'surrounding_context' || key === 'semantic_topic') {
+                continue;
+            }
             if (!Object.prototype.hasOwnProperty.call(metadata, key)) {
                 normalized[key] = null;
                 continue;

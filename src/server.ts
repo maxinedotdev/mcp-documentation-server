@@ -47,7 +47,7 @@ async function initializeDocumentManager() {
 // Add document tool
 server.addTool({
     name: "add_document",
-    description: "Add a new document to the knowledge base",
+    description: "Add a new document to the knowledge base. If this is test data, include metadata like { source: \"test\", test: true, tags: [\"test\"] } to make cleanup easy.",
     parameters: z.object({
         title: z.string().describe("The title of the document"),
         content: z.string().describe("The content of the document"),
@@ -70,7 +70,7 @@ server.addTool({
 // Crawl documentation tool
 server.addTool({
     name: "crawl_documentation",
-    description: "Crawl public documentation starting from a seed URL and ingest it as documents.",
+    description: "Crawl public documentation starting from a seed URL and ingest it as documents. If this is a test crawl, include metadata like { source: \"test\", test: true, tags: [\"test\"] } on ingest results where possible so cleanup is easy.",
     parameters: z.object({
         seed_url: z.string().describe("The starting URL for the crawl"),
         max_pages: z.number().int().min(1).default(100).describe("Maximum number of pages to ingest"),
@@ -210,13 +210,13 @@ server.addTool({
 // Get uploads folder path tool
 server.addTool({
     name: "get_uploads_path",
-    description: "Get the absolute path to the uploads folder where you can manually place .txt and .md files",
+    description: "Get the absolute path to the uploads folder where you can manually place .txt and .md files. For test runs, tag documents with metadata { source: \"test\", test: true, tags: [\"test\"] } when ingesting.",
     parameters: z.object({}),
     execute: async () => {
         try {
             const manager = await initializeDocumentManager();
             const uploadsPath = manager.getUploadsPath();
-            return `Uploads folder path: ${uploadsPath}\n\nYou can place .txt and .md files in this folder, then use the 'process_uploads' tool to create embeddings for them.`;
+            return `Uploads folder path: ${uploadsPath}\n\nYou can place .txt and .md files in this folder, then use the 'process_uploads' tool to create embeddings for them. For test runs, tag documents with metadata like { source: "test", test: true, tags: ["test"] } so cleanup is easy.`;
         } catch (error) {
             throw new Error(`Failed to get uploads path: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -226,7 +226,7 @@ server.addTool({
 // Process uploads folder tool
 server.addTool({
     name: "process_uploads",
-    description: "Process all .txt and .md files in the uploads folder and create embeddings for them",
+    description: "Process all .txt and .md files in the uploads folder and create embeddings for them. If this is test data, include metadata like { source: \"test\", test: true, tags: [\"test\"] } so cleanup is easy.",
     parameters: z.object({}), execute: async () => {
         try {
             const manager = await initializeDocumentManager();
