@@ -333,7 +333,8 @@ export class LanceDBAdapter implements VectorDatabase {
                     end_position: row.end_position,
                     metadata: row.metadata
                 },
-                score: row._distance ? 1 - row._distance : 1 // Convert distance to similarity
+                // Normalize cosine similarity from [-1, 1] to [0, 1] for better UX
+                score: row._distance ? (2 - row._distance) / 2 : 1
             })).sort((a: SearchResult, b: SearchResult) => b.score - a.score);
         } catch (error) {
             logger.error("Failed to search LanceDB:", error);
@@ -530,8 +531,8 @@ export class LanceDBAdapter implements VectorDatabase {
                     metadata: row.metadata,
                     source_url: row.source_url,
                 },
-                // Convert distance to similarity and clamp to [0, 1] range
-                score: row._distance ? Math.max(0, Math.min(1, 1 - row._distance)) : 1,
+                // Normalize cosine similarity from [-1, 1] to [0, 1] for better UX
+                score: row._distance ? (2 - row._distance) / 2 : 1,
             })).sort((a: CodeBlockSearchResult, b: CodeBlockSearchResult) => b.score - a.score);
         } catch (error) {
             logger.error("Failed to search code blocks:", error);

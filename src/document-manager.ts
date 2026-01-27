@@ -31,18 +31,13 @@ export class DocumentManager {
     private useGeneratedTagsInQuery: boolean;
 
     constructor(embeddingProvider?: EmbeddingProvider, vectorDatabase?: VectorDatabase) {
-        console.error('[DocumentManager] Constructor START');
-        const startTime = Date.now();
-
         // Always use default paths
         const baseDir = getDefaultDataDir();
         this.dataDir = path.join(baseDir, 'data');
         this.uploadsDir = path.join(baseDir, 'uploads');
-        console.error(`[DocumentManager] Data dir: ${this.dataDir}, Uploads dir: ${this.uploadsDir}`);
 
         this.embeddingProvider = embeddingProvider || new SimpleEmbeddingProvider();
         this.intelligentChunker = new IntelligentChunker(this.embeddingProvider);
-        console.error(`[DocumentManager] Embedding provider initialized`);
 
         // Feature flags with fallback
         this.useIndexing = process.env.MCP_INDEXING_ENABLED !== 'false';
@@ -51,19 +46,14 @@ export class DocumentManager {
         this.useStreaming = process.env.MCP_STREAMING_ENABLED !== 'false';
         this.useTagGeneration = process.env.MCP_TAG_GENERATION_ENABLED === 'true';
         this.useGeneratedTagsInQuery = process.env.MCP_GENERATED_TAGS_IN_QUERY === 'true';
-        console.error(`[DocumentManager] Feature flags - Indexing: ${this.useIndexing}, VectorDB: ${this.useVectorDb}, Parallel: ${this.useParallelProcessing}, Streaming: ${this.useStreaming}, TagGeneration: ${this.useTagGeneration}, GeneratedTagsInQuery: ${this.useGeneratedTagsInQuery}`);
         
-        console.error('[DocumentManager] Ensuring data directories...');
         this.ensureDataDir();
         this.ensureUploadsDir();
-        console.error('[DocumentManager] Data directories ensured');
         
         // Initialize indexing with error handling
         if (this.useIndexing) {
             try {
-                console.error('[DocumentManager] Creating DocumentIndex...');
                 this.documentIndex = new DocumentIndex(this.dataDir);
-                console.error('[DocumentManager] Indexing enabled');
             } catch (error) {
                 console.warn('[DocumentManager] Indexing disabled due to error:', error);
                 this.useIndexing = false;
@@ -73,9 +63,7 @@ export class DocumentManager {
         // Initialize vector database with error handling
         // Note: We initialize asynchronously in the background to avoid blocking the constructor
         if (this.useVectorDb) {
-            console.error('[DocumentManager] Creating vector database...');
             this.vectorDatabase = vectorDatabase || this.createVectorDatabase();
-            console.error('[DocumentManager] Starting vector database initialization in background...');
             // Initialize asynchronously without blocking constructor, but store the promise
             this.vectorDbInitPromise = this.initializeVectorDatabase().catch(error => {
                 console.error('[DocumentManager] Vector database initialization failed:', error);
@@ -84,11 +72,7 @@ export class DocumentManager {
                 this.vectorDbInitPromise = null;
                 throw error;
             });
-            console.error('[DocumentManager] Vector database initialization started (async, non-blocking)');
         }
-
-        const endTime = Date.now();
-        console.error(`[DocumentManager] Constructor END - took ${endTime - startTime}ms`);
     }
 
     /**
@@ -105,18 +89,12 @@ export class DocumentManager {
      * Initialize vector database with automatic migration
      */
     private async initializeVectorDatabase(): Promise<void> {
-        console.error('[DocumentManager] initializeVectorDatabase START');
-        const startTime = Date.now();
-
         if (!this.vectorDatabase) {
-            console.error('[DocumentManager] initializeVectorDatabase END - no vector database');
             return;
         }
 
         try {
-            console.error('[DocumentManager] Calling vectorDatabase.initialize()...');
             await this.vectorDatabase.initialize();
-            console.error('[DocumentManager] vectorDatabase.initialize() completed');
 
             // Attempt migration if needed
             // Check if we should migrate (basic check - can be enhanced)
@@ -126,21 +104,15 @@ export class DocumentManager {
             // Simple heuristic: if we have JSON files and vector DB is new, migrate
             if (existsSync(dataDir)) {
                 try {
-                    console.error('[DocumentManager] Checking for migration...');
                     const { readdir } = await import('fs/promises');
                     const files = await readdir(dataDir);
                     const jsonFiles = files.filter(f => f.endsWith('.json'));
 
                     if (jsonFiles.length > 0) {
-                        console.error(`[DocumentManager] Found ${jsonFiles.length} JSON documents, attempting migration...`);
                         const result = await migrateFromJson(this.vectorDatabase, getDefaultDataDir());
-                        if (result.success) {
-                            console.error(`[DocumentManager] Migration completed: ${result.documentsMigrated} documents, ${result.chunksMigrated} chunks`);
-                        } else {
+                        if (!result.success) {
                             console.warn(`[DocumentManager] Migration encountered errors: ${result.errors.join(', ')}`);
                         }
-                    } else {
-                        console.error('[DocumentManager] No JSON files found, skipping migration');
                     }
                 } catch (migrationError) {
                     console.warn('[DocumentManager] Migration attempt failed:', migrationError);
@@ -151,9 +123,6 @@ export class DocumentManager {
             console.error('[DocumentManager] Failed to initialize vector database:', error);
             throw error;
         }
-
-        const endTime = Date.now();
-        console.error(`[DocumentManager] initializeVectorDatabase END - took ${endTime - startTime}ms`);
     }
 
     /**
@@ -170,13 +139,16 @@ export class DocumentManager {
      * This waits for async initialization to complete with a timeout
      */
     private async ensureVectorDbReady(): Promise<boolean> {
-        if (!this.useVectorDb || !this.vectorDatabase) {
+        if (!this.useVectorDb) {
+            return false;
+        }
+        
+        if (!this.vectorDatabase) {
             return false;
         }
 
         // If there's an ongoing initialization, wait for it (with timeout)
         if (this.vectorDbInitPromise) {
-            console.error('[DocumentManager] Waiting for vector DB initialization...');
             try {
                 const timeoutPromise = new Promise<never>((_, reject) => {
                     setTimeout(() => {
@@ -185,7 +157,6 @@ export class DocumentManager {
                 });
 
                 await Promise.race([this.vectorDbInitPromise, timeoutPromise]);
-                console.error('[DocumentManager] Vector DB initialization completed');
             } catch (error) {
                 console.error('[DocumentManager] Vector DB initialization failed or timed out:', error);
                 // Disable vector DB if initialization fails
@@ -198,8 +169,8 @@ export class DocumentManager {
 
         // Check if vector DB is actually initialized
         const isInitialized = (this.vectorDatabase as any).isInitialized?.() ?? true;
+        
         if (!isInitialized) {
-            console.error('[DocumentManager] Vector DB exists but not initialized');
             return false;
         }
 
@@ -272,7 +243,21 @@ export class DocumentManager {
             chunkOptions.overlap = envChunkOverlap;
         }
 
-        const chunks = await this.intelligentChunker.createChunks(id, content, chunkOptions);
+        const chunks = await this.intelligentChunker.createChunks(id, content, chunkOptions, metadata, title);
+
+        // DIAGNOSTIC: Log chunk status immediately after creation
+        console.error(`[DocumentManager]   Total chunks: ${chunks.length}`);
+        const chunksWithEmbeddings = chunks.filter(c => c.embeddings && c.embeddings.length > 0);
+        console.error(`[DocumentManager]   Chunks with embeddings: ${chunksWithEmbeddings.length}`);
+        if (chunksWithEmbeddings.length > 0 && chunksWithEmbeddings.length < chunks.length) {
+            console.error(`[DocumentManager]   WARNING: Some chunks missing embeddings!`);
+            chunks.forEach((chunk, idx) => {
+                const hasEmbedding = chunk.embeddings && chunk.embeddings.length > 0;
+                if (!hasEmbedding) {
+                    console.error(`[DocumentManager]     Chunk ${idx} (${chunk.id}) has NO embedding - content_length: ${chunk.content.length}`);
+                }
+            });
+        }
 
         const document: Document = {
             id,
@@ -303,31 +288,48 @@ export class DocumentManager {
         }
 
         // Add chunks to vector database if enabled
+        console.error(`[DocumentManager] === CHUNK STORAGE START ===`);
+        console.error(`[DocumentManager] useVectorDb: ${this.useVectorDb}, vectorDatabase: ${!!this.vectorDatabase}`);
+        
         if (this.useVectorDb && this.vectorDatabase) {
             try {
                 console.error(`[DocumentManager] Adding chunks to vector DB - useVectorDb: ${this.useVectorDb}, vectorDatabase exists: ${!!this.vectorDatabase}`);
-                
+
                 // Ensure vector DB is ready before adding chunks
                 const vectorDbReady = await this.ensureVectorDbReady();
                 if (!vectorDbReady) {
                     console.error('[DocumentManager] Vector DB not ready, skipping chunk indexing');
+                    console.error('[DocumentManager] This will cause new documents to be unsearchable!');
+                    console.error('[DocumentManager] Possible causes: initialization timeout, init failure, or isInitialized() returning false');
                     return document;
                 }
-                
+
                 // Check if vector DB is initialized (diagnostic)
                 const isInitialized = (this.vectorDatabase as any).isInitialized?.() ?? true;
                 console.error(`[DocumentManager] Vector DB initialized: ${isInitialized}`);
-                
+                if (!isInitialized) {
+                    console.error('[DocumentManager] CRITICAL: Vector DB reports not initialized even after ensureVectorDbReady() returned true!');
+                }
+
                 // Filter chunks that have embeddings
                 const chunksWithEmbeddings = chunks.filter(chunk => chunk.embeddings && chunk.embeddings.length > 0);
                 console.error(`[DocumentManager] Total chunks: ${chunks.length}, Chunks with embeddings: ${chunksWithEmbeddings.length}`);
-                
+
+                // DIAGNOSTIC: Log details of chunks without embeddings
+                const chunksWithoutEmbeddings = chunks.filter(chunk => !chunk.embeddings || chunk.embeddings.length === 0);
+                if (chunksWithoutEmbeddings.length > 0) {
+                    chunksWithoutEmbeddings.forEach((chunk, idx) => {
+                        console.error(`  [${idx}] chunk_id: ${chunk.id}, chunk_index: ${chunk.chunk_index}, content_length: ${chunk.content.length}, embeddings: ${chunk.embeddings ? chunk.embeddings.length : 'null'}`);
+                    });
+                }
+
                 if (chunksWithEmbeddings.length > 0) {
                     console.error(`[DocumentManager] Calling addChunks for ${chunksWithEmbeddings.length} chunks...`);
                     await this.vectorDatabase.addChunks(chunksWithEmbeddings);
                     console.error(`[DocumentManager] Successfully added ${chunksWithEmbeddings.length} chunks to vector DB`);
                 } else {
                     console.warn(`[DocumentManager] No chunks with embeddings to add to vector DB (total: ${chunks.length})`);
+                    console.warn(`[DocumentManager] CRITICAL: All chunks are missing embeddings! This will cause search to fail.`);
                 }
             } catch (error) {
                 console.error('[DocumentManager] FAILED to add chunks to vector database. Error:', error);
@@ -342,6 +344,7 @@ export class DocumentManager {
             console.warn(`[DocumentManager] Vector DB not enabled or not available. useVectorDb: ${this.useVectorDb}, vectorDatabase: ${!!this.vectorDatabase}`);
         }
 
+        console.error(`[DocumentManager] === CHUNK STORAGE END ===`);
         return document;
     }
 
@@ -482,21 +485,45 @@ export class DocumentManager {
     }
 
     async searchDocuments(documentId: string, query: string, limit = 10): Promise<SearchResult[]> {
+        console.error(`[DocumentManager] searchDocuments START - documentId: ${documentId}, query: "${query}"`);
+        
         const queryEmbedding = await this.embeddingProvider.generateEmbedding(query);
+        console.error(`[DocumentManager] Query embedding generated: ${queryEmbedding.length} dimensions`);
+        
+        // Log query embedding statistics
+        const qEmbedArray = Array.from(queryEmbedding);
+        const qNorm = Math.sqrt(qEmbedArray.reduce((sum, v) => sum + v*v, 0));
+        const qMin = Math.min(...qEmbedArray);
+        const qMax = Math.max(...qEmbedArray);
+        console.error(`[DocumentManager] Query embedding - norm: ${qNorm.toFixed(6)}, min: ${qMin.toFixed(6)}, max: ${qMax.toFixed(6)}`);
 
         // Get similarity threshold from environment variable
+        // Default to 0.0 to allow all results (similarity range is [0, 1])
         const similarityThreshold = parseFloat(process.env.MCP_SIMILARITY_THRESHOLD || '0.0');
+        console.error(`[DocumentManager] Similarity threshold: ${similarityThreshold}`);
 
         // Use vector database (LanceDB is now the only supported backend)
         if (this.useVectorDb && this.vectorDatabase) {
             try {
+                const filter = `document_id = '${documentId}'`;
+                console.error(`[DocumentManager] Searching with filter: ${filter}`);
+                
                 const results = await this.vectorDatabase.search(
                     queryEmbedding,
                     limit,
-                    `document_id = '${documentId}'`
+                    filter
                 );
+                
+                console.error(`[DocumentManager] Vector search returned ${results.length} results`);
+                if (results.length > 0) {
+                    console.error(`[DocumentManager] Top result: doc_id=${results[0].chunk.document_id}, score=${results[0].score}`);
+                }
+                
                 // Filter by similarity threshold
-                return results.filter(result => result.score >= similarityThreshold);
+                const filteredResults = results.filter(result => result.score >= similarityThreshold);
+                console.error(`[DocumentManager] After threshold filter: ${filteredResults.length} results`);
+                
+                return filteredResults;
             } catch (error) {
                 console.error('[DocumentManager] Vector database search failed:', error);
                 throw new Error(`Failed to search documents: ${error}`);
@@ -994,19 +1021,45 @@ export class DocumentManager {
         const includeMetadata = options.include_metadata ?? true;
         const filters = options.filters ?? {};
 
+        console.error(`[DocumentManager] query START - queryText: "${queryText}", limit: ${limit}, offset: ${offset}`);
+        console.error(`[DocumentManager] useVectorDb: ${this.useVectorDb}, vectorDatabase exists: ${!!this.vectorDatabase}`);
+
         // Try vector search first
         let results: DocumentDiscoveryResult[] = [];
         
         if (this.useVectorDb && this.vectorDatabase) {
+            console.error('[DocumentManager] Attempting vector search...');
             const vectorDbReady = await this.ensureVectorDbReady();
+            console.error(`[DocumentManager] vectorDbReady: ${vectorDbReady}`);
+            
             if (vectorDbReady) {
                 try {
+                    console.error('[DocumentManager] Generating query embedding...');
                     const queryEmbedding = await this.embeddingProvider.generateEmbedding(queryText);
+                    console.error(`[DocumentManager] Query embedding generated with ${queryEmbedding.length} dimensions`);
+                    
+                    const filterQuery = this.buildFilterQuery(filters);
+                    console.error(`[DocumentManager] Filter query: "${filterQuery}"`);
+                    
                     const vectorResults = await this.vectorDatabase.search(
                         queryEmbedding,
                         limit + offset + 10, // Get extra results for filtering
-                        this.buildFilterQuery(filters)
+                        filterQuery
                     );
+                    
+                    console.error(`[DocumentManager] Vector search returned ${vectorResults.length} results`);
+                    
+                    // Log individual vector results for debugging
+                    if (vectorResults.length > 0) {
+                        console.error('[DocumentManager] Individual vector results:');
+                        for (let i = 0; i < Math.min(5, vectorResults.length); i++) {
+                            const result = vectorResults[i];
+                            console.error(`  [${i}] doc_id: ${result.chunk.document_id}, score: ${result.score.toFixed(4)}`);
+                        }
+                        if (vectorResults.length > 5) {
+                            console.error(`  ... and ${vectorResults.length - 5} more`);
+                        }
+                    }
                     
                     // Group by document ID and aggregate scores
                     const docScoreMap = new Map<string, { score: number; chunks: number }>();
@@ -1020,8 +1073,26 @@ export class DocumentManager {
                         });
                     }
                     
+                    console.error(`[DocumentManager] Grouped ${docScoreMap.size} unique documents`);
+                    
                     // Convert to results with average scores
                     const similarityThreshold = parseFloat(process.env.MCP_SIMILARITY_THRESHOLD || '0.3');
+                    console.error(`[DocumentManager] Similarity threshold: ${similarityThreshold}`);
+                    
+                    const preFilterResults = Array.from(docScoreMap.entries())
+                        .map(([docId, data]) => ({
+                            id: docId,
+                            title: '',
+                            score: data.score / data.chunks,
+                            updated_at: '',
+                            chunks_count: data.chunks
+                        }));
+                    
+                    console.error(`[DocumentManager] Pre-filter results (${preFilterResults.length}):`);
+                    for (const result of preFilterResults) {
+                        console.error(`  doc_id: ${result.id}, avg_score: ${result.score.toFixed(4)}, chunks: ${result.chunks_count}`);
+                    }
+                    
                     results = Array.from(docScoreMap.entries())
                         .filter(([_, data]) => (data.score / data.chunks) >= similarityThreshold)
                         .map(([docId, data]) => ({
@@ -1032,10 +1103,17 @@ export class DocumentManager {
                             chunks_count: data.chunks
                         }))
                         .sort((a, b) => b.score - a.score);
+                    
+                    console.error(`[DocumentManager] Post-filter results: ${results.length} documents passed threshold`);
                 } catch (error) {
-                    console.warn('[DocumentManager] Vector search failed, falling back to keyword search:', error);
+                    console.error('[DocumentManager] Vector search failed, falling back to keyword search:', error);
+                    console.error(`[DocumentManager] Error details: ${error instanceof Error ? error.message : String(error)}`);
                 }
+            } else {
+                console.error('[DocumentManager] Vector DB not ready, skipping vector search');
             }
+        } else {
+            console.error('[DocumentManager] Vector DB not enabled, skipping vector search');
         }
         
         // Fall back to keyword search if vector search returned insufficient results
