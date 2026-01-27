@@ -1,3 +1,12 @@
+# Unreleased
+
+### Dependencies
+
+* upgrade zod from v3.25.64 to v4.3.6
+  - No breaking changes in this upgrade
+  - All tests pass successfully
+  - Migration guide available at `openspec/changes/upgrade-zod-v4/migration-guide.md`
+
 # [0.2.0](https://github.com/maxinedotdev/saga/compare/v0.1.0...v0.2.0) (2026-01-26)
 
 ### Breaking Changes

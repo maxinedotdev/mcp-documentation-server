@@ -10,6 +10,7 @@ import * as os from "os";
 import { DocumentChunk, SearchResult, CodeBlock, CodeBlockSearchResult } from "../types.js";
 import { getLogger } from "../utils.js";
 import * as lancedb from "@lancedb/lancedb";
+import { Index } from "@lancedb/lancedb";
 
 const logger = getLogger("VectorDB");
 
@@ -150,7 +151,7 @@ export class LanceDBAdapter implements VectorDatabase {
                     // Create scalar indexes on document_id and language
                     console.error('[LanceDBAdapter] Creating scalar indexes on code_blocks table...');
                     try {
-                        await this.codeBlocksTable.createScalarIndex("document_id");
+                        await this.codeBlocksTable.createIndex("document_id", { config: Index.btree() });
                         logger.info("Created scalar index on 'document_id' column");
                         console.error('[LanceDBAdapter] Scalar index on document_id created');
                     } catch (error) {
@@ -158,7 +159,7 @@ export class LanceDBAdapter implements VectorDatabase {
                     }
 
                     try {
-                        await this.codeBlocksTable.createScalarIndex("language");
+                        await this.codeBlocksTable.createIndex("language", { config: Index.btree() });
                         logger.info("Created scalar index on 'language' column");
                         console.error('[LanceDBAdapter] Scalar index on language created');
                     } catch (error) {
@@ -421,14 +422,14 @@ export class LanceDBAdapter implements VectorDatabase {
                 // Create indexes after initial data is added
                 try {
                     console.error('[LanceDBAdapter] Creating scalar indexes on initial code_blocks data...');
-                    await this.codeBlocksTable.createScalarIndex("document_id");
+                    await this.codeBlocksTable.createIndex("document_id", { config: Index.btree() });
                     logger.info("Created scalar index on 'document_id' column");
                 } catch (error) {
                     logger.debug("Scalar index creation failed (may already exist):", error);
                 }
 
                 try {
-                    await this.codeBlocksTable.createScalarIndex("language");
+                    await this.codeBlocksTable.createIndex("language", { config: Index.btree() });
                     logger.info("Created scalar index on 'language' column");
                 } catch (error) {
                     logger.debug("Scalar index on language creation failed (may already exist):", error);
