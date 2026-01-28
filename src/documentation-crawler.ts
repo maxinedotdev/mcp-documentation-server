@@ -1,11 +1,14 @@
 import { DocumentManager } from './document-manager.js';
 import { normalizeText } from './utils.js';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { convert } from 'html-to-text';
 import { CodeBlock } from './types.js';
 
 const DEFAULT_USER_AGENT = 'MCP-Documentation-Server/1.0';
 const MAX_SITEMAP_FETCHES = 10;
+const DEFAULT_CRAWL_TIMEOUT_MS = 15000;
+const DEFAULT_CRAWL_MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
+const DEFAULT_CRAWL_REQUEST_DELAY_MS = 0;
 
 type RobotsRules = {
     allows: string[];
@@ -53,6 +56,9 @@ export async function crawlDocumentation(
     const robotsCache = new Map<string, RobotsRules>();
     const seedRobots = await getRobotsForOrigin(seedOrigin, robotsCache);
     const sitemapUrls = await collectSitemapUrls(seedRobots.sitemaps, seedOrigin);
+    const requestTimeoutMs = parsePositiveInt(process.env.MCP_CRAWL_TIMEOUT_MS, DEFAULT_CRAWL_TIMEOUT_MS);
+    const maxResponseBytes = parsePositiveInt(process.env.MCP_CRAWL_MAX_RESPONSE_BYTES, DEFAULT_CRAWL_MAX_RESPONSE_BYTES);
+    const requestDelayMs = parsePositiveInt(process.env.MCP_CRAWL_REQUEST_DELAY_MS, DEFAULT_CRAWL_REQUEST_DELAY_MS);
 
     const queue: CrawlQueueItem[] = [{ url: seed.toString(), depth: 0 }];
     const queued = new Set<string>([normalizeUrlForSet(seed)]);
@@ -108,13 +114,17 @@ export async function crawlDocumentation(
             continue;
         }
 
+        if (requestDelayMs > 0 && queueIndex > 1) {
+            await sleep(requestDelayMs);
+        }
+
         try {
-            const response = await fetch(parsedUrl.toString(), {
+            const response = await fetchWithTimeout(parsedUrl.toString(), {
                 headers: {
                     'User-Agent': DEFAULT_USER_AGENT,
                     'Accept': 'text/html, text/plain, text/markdown, application/json, application/xml;q=0.9, */*;q=0.1',
                 },
-            });
+            }, requestTimeoutMs);
 
             if (!response.ok) {
                 pagesSkipped += 1;
@@ -128,7 +138,17 @@ export async function crawlDocumentation(
                 continue;
             }
 
-            const body = await response.text();
+            let body: string;
+            try {
+                body = await readResponseTextWithLimit(response, maxResponseBytes);
+            } catch (error) {
+                pagesSkipped += 1;
+                errors.push({
+                    url: parsedUrl.toString(),
+                    error: error instanceof Error ? error.message : String(error),
+                });
+                continue;
+            }
             const { text, title, links, codeBlocks } = extractContent(body, contentType, parsedUrl);
             const normalizedText = normalizeText(text);
 
@@ -239,6 +259,72 @@ function normalizeHostname(hostname: string): string {
 
 function normalizeContentType(contentType: string | null): string {
     return contentType ? contentType.split(';')[0].trim().toLowerCase() : '';
+}
+
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+    if (!value) return fallback;
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function sleep(ms: number): Promise<void> {
+    if (ms <= 0) return Promise.resolve();
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
+    if (!timeoutMs || timeoutMs <= 0) {
+        return fetch(url, options);
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
+async function readResponseTextWithLimit(response: Response, maxBytes: number): Promise<string> {
+    if (maxBytes > 0) {
+        const contentLength = response.headers.get('content-length');
+        if (contentLength) {
+            const size = Number.parseInt(contentLength, 10);
+            if (Number.isFinite(size) && size > maxBytes) {
+                throw new Error(`Response exceeded max size (${size} bytes > ${maxBytes} bytes)`);
+            }
+        }
+    }
+
+    if (!response.body || maxBytes <= 0) {
+        return response.text();
+    }
+
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        total += value.byteLength;
+        if (maxBytes > 0 && total > maxBytes) {
+            await reader.cancel();
+            throw new Error(`Response exceeded max size (${maxBytes} bytes)`);
+        }
+        chunks.push(value);
+    }
+
+    const merged = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+        merged.set(chunk, offset);
+        offset += chunk.byteLength;
+    }
+
+    return new TextDecoder('utf-8').decode(merged);
 }
 
 function isTextContentType(contentType: string): boolean {
@@ -565,6 +651,13 @@ function decodeHtmlEntities(value: string): string {
         .replace(/&gt;/g, '>');
 }
 
+function hashCodeBlockContent(content: string): string {
+    return createHash('sha256')
+        .update(content)
+        .digest('hex')
+        .substring(0, 16);
+}
+
 // Export functions for testing
 export { extractCodeBlocks, normalizeLanguageTag };
 
@@ -634,6 +727,43 @@ function normalizeLanguageTag(language: string): string {
 function extractCodeBlocks(html: string, sourceUrl: string): CodeBlock[] {
     const codeBlocks: CodeBlock[] = [];
     let blockCounter = 0;
+    const seenContent = new Map<string, number>();
+    const seenContentLang = new Set<string>();
+
+    const pushBlock = (block: CodeBlock) => {
+        const contentHash = hashCodeBlockContent(block.content);
+        const langKey = `${contentHash}:${block.language}`;
+
+        if (block.language === 'unknown') {
+            if (seenContent.has(contentHash)) {
+                return;
+            }
+            codeBlocks.push(block);
+            seenContent.set(contentHash, codeBlocks.length - 1);
+            seenContentLang.add(langKey);
+            return;
+        }
+
+        if (seenContentLang.has(langKey)) {
+            return;
+        }
+
+        const existingIndex = seenContent.get(contentHash);
+        if (existingIndex !== undefined) {
+            const existing = codeBlocks[existingIndex];
+            if (existing && existing.language === 'unknown') {
+                codeBlocks[existingIndex] = block;
+                seenContentLang.add(langKey);
+                return;
+            }
+        }
+
+        codeBlocks.push(block);
+        seenContentLang.add(langKey);
+        if (!seenContent.has(contentHash)) {
+            seenContent.set(contentHash, codeBlocks.length - 1);
+        }
+    };
     
     // Pattern 1: Standard code blocks with language class
     // Matches: <pre><code class="language-javascript">...</code></pre>
@@ -648,7 +778,7 @@ function extractCodeBlocks(html: string, sourceUrl: string): CodeBlock[] {
         // Skip empty code blocks
         if (!content) continue;
         
-        codeBlocks.push({
+        pushBlock({
             id: `${blockCounter}`,
             document_id: '', // Will be set by DocumentManager
             block_id: `block-${blockCounter}`,
@@ -673,7 +803,7 @@ function extractCodeBlocks(html: string, sourceUrl: string): CodeBlock[] {
         // Skip empty code blocks
         if (!content) continue;
         
-        codeBlocks.push({
+        pushBlock({
             id: `${blockCounter}`,
             document_id: '', // Will be set by DocumentManager
             block_id: `block-${blockCounter}`,
@@ -722,7 +852,7 @@ function extractCodeBlocks(html: string, sourceUrl: string): CodeBlock[] {
         
         // Create code blocks for each tab variant
         for (const tab of tabs) {
-            codeBlocks.push({
+            pushBlock({
                 id: `${blockCounter}`,
                 document_id: '', // Will be set by DocumentManager
                 block_id: `tabbed-block-${blockCounter}`,
@@ -751,7 +881,7 @@ function extractCodeBlocks(html: string, sourceUrl: string): CodeBlock[] {
         // Skip empty code blocks
         if (!content) continue;
         
-        codeBlocks.push({
+        pushBlock({
             id: `${blockCounter}`,
             document_id: '', // Will be set by DocumentManager
             block_id: `block-${blockCounter}`,
@@ -777,7 +907,7 @@ function extractCodeBlocks(html: string, sourceUrl: string): CodeBlock[] {
         // Skip empty code blocks
         if (!content) continue;
         
-        codeBlocks.push({
+        pushBlock({
             id: `${blockCounter}`,
             document_id: '', // Will be set by DocumentManager
             block_id: `block-${blockCounter}`,
