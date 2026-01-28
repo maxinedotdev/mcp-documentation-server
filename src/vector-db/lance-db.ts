@@ -8,6 +8,7 @@
 import * as path from "path";
 import * as os from "os";
 import { DocumentChunk, SearchResult, CodeBlock, CodeBlockSearchResult } from "../types.js";
+import { normalizeLanguageTag } from "../code-block-utils.js";
 import { getLogger } from "../utils.js";
 import * as lancedb from "@lancedb/lancedb";
 import { Index } from "@lancedb/lancedb";
@@ -648,8 +649,8 @@ export class LanceDBAdapter implements VectorDatabase {
             const query = this.codeBlocksTable.search(queryEmbedding).limit(limit);
 
             // Apply language filter if provided
-            if (language) {
-                const normalizedLanguage = language.toLowerCase().trim();
+            if (language && language.trim().length > 0) {
+                const normalizedLanguage = normalizeLanguageTag(language);
                 query.where(`language = '${normalizedLanguage}'`);
             }
 

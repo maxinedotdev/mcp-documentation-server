@@ -1,5 +1,6 @@
 import { DocumentManager } from './document-manager.js';
 import { normalizeText } from './utils.js';
+import { normalizeLanguageTag } from './code-block-utils.js';
 import { createHash, randomUUID } from 'crypto';
 import { convert } from 'html-to-text';
 import type { CodeBlock } from './types.js';
@@ -660,65 +661,6 @@ function hashCodeBlockContent(content: string): string {
 
 // Export functions for testing
 export { extractCodeBlocks, normalizeLanguageTag };
-
-/**
- * Normalize language tag to a consistent format
- * Handles variations like "javascript", "js", "JavaScript" → "javascript"
- */
-function normalizeLanguageTag(language: string): string {
-    if (!language) return 'unknown';
-    
-    const normalized = language.toLowerCase().trim();
-    
-    // Return 'unknown' for empty strings after trimming
-    if (!normalized) return 'unknown';
-    
-    // Common language aliases
-    const aliases: Record<string, string> = {
-        'javascript': 'javascript',
-        'js': 'javascript',
-        'typescript': 'typescript',
-        'ts': 'typescript',
-        'python': 'python',
-        'py': 'python',
-        'java': 'java',
-        'c#': 'csharp',
-        'csharp': 'csharp',
-        'c++': 'cpp',
-        'cpp': 'cpp',
-        'c': 'c',
-        'go': 'go',
-        'golang': 'go',
-        'rust': 'rust',
-        'rs': 'rust',
-        'ruby': 'ruby',
-        'rb': 'ruby',
-        'php': 'php',
-        'swift': 'swift',
-        'kotlin': 'kotlin',
-        'kt': 'kotlin',
-        'scala': 'scala',
-        'shell': 'shell',
-        'bash': 'shell',
-        'sh': 'shell',
-        'powershell': 'powershell',
-        'ps1': 'powershell',
-        'sql': 'sql',
-        'json': 'json',
-        'xml': 'xml',
-        'html': 'html',
-        'css': 'css',
-        'scss': 'scss',
-        'yaml': 'yaml',
-        'yml': 'yaml',
-        'markdown': 'markdown',
-        'md': 'markdown',
-        'dockerfile': 'dockerfile',
-        'docker': 'dockerfile',
-    };
-    
-    return aliases[normalized] || normalized;
-}
 
 /**
  * Extract all code blocks from HTML, including all language variants from tabbed interfaces

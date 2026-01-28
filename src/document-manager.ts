@@ -9,6 +9,7 @@ import { IntelligentChunker } from './intelligent-chunker.js';
 import { extractText } from 'unpdf';
 import { getDefaultDataDir, expandHomeDir } from './utils.js';
 import { DocumentIndex } from './indexing/document-index.js';
+import { extractMarkdownCodeBlocks } from './markdown-code-blocks.js';
 import type { VectorDatabase } from './vector-db/lance-db.js';
 import { createVectorDatabase, migrateFromJson } from './vector-db/index.js';
 
@@ -416,6 +417,16 @@ export class DocumentManager {
             }
         } else {
             console.warn(`[DocumentManager] Vector DB not enabled or not available. useVectorDb: ${this.useVectorDb}, vectorDatabase: ${!!this.vectorDatabase}`);
+        }
+
+        const markdownCodeBlocks = extractMarkdownCodeBlocks(content);
+        if (markdownCodeBlocks.length > 0) {
+            await this.addCodeBlocks(id, markdownCodeBlocks, {
+                source: metadata.source,
+                source_url: metadata.source_url,
+                crawl_id: metadata.crawl_id,
+                contentType: metadata.contentType || metadata.content_type,
+            });
         }
 
         console.error(`[DocumentManager] === CHUNK STORAGE END ===`);
