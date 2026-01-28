@@ -211,6 +211,36 @@ export class DocumentManager {
     }
 
     async addDocument(title: string, content: string, metadata: Record<string, any> = {}): Promise<Document> {
+        const id = this.generateId(content);
+        const now = new Date().toISOString();
+
+        const existingDocument = await this.getDocument(id);
+        if (existingDocument) {
+            if (metadata && Object.keys(metadata).length > 0) {
+                existingDocument.metadata = {
+                    ...existingDocument.metadata,
+                    ...metadata,
+                };
+                existingDocument.updated_at = now;
+                const filePath = this.getDocumentPath(id);
+                await writeFile(filePath, JSON.stringify(existingDocument, null, 2));
+
+                if (this.useIndexing && this.documentIndex) {
+                    await this.ensureIndexInitialized();
+                    this.documentIndex.addDocument(
+                        existingDocument.id,
+                        filePath,
+                        existingDocument.content,
+                        existingDocument.chunks,
+                        existingDocument.title,
+                        existingDocument.metadata
+                    );
+                }
+            }
+
+            return existingDocument;
+        }
+
         // Check for duplicate content if indexing is enabled
         if (this.useIndexing && this.documentIndex) {
             await this.ensureIndexInitialized();
@@ -221,9 +251,6 @@ export class DocumentManager {
                 // For now, we'll continue with creating a new document
             }
         }
-
-        const id = this.generateId(content);
-        const now = new Date().toISOString();
 
         // Create chunks using intelligent chunker with environment variable overrides
         // Use -1 to use intelligent chunker's content-type-specific defaults
@@ -854,7 +881,7 @@ export class DocumentManager {
                     // Check if document with this filename already exists and remove it
                     const existingDoc = await this.findDocumentByTitle(title);
                     if (existingDoc) {
-                        await this.removeDocument(existingDoc.id);
+                        await this.deleteDocument(existingDoc.id);
                     }
 
                     // Create new document with embeddings
@@ -892,17 +919,6 @@ export class DocumentManager {
     private async findDocumentByTitle(title: string): Promise<Document | null> {
         const documents = await this.getAllDocuments();
         return documents.find(doc => doc.title === title) || null;
-    }
-
-    private async removeDocument(documentId: string): Promise<void> {
-        try {
-            const documentPath = this.getDocumentPath(documentId);
-            if (existsSync(documentPath)) {
-                await import('fs/promises').then(fs => fs.unlink(documentPath));
-            }
-        } catch (error) {
-            // Ignore errors when removing non-existent files
-        }
     }
 
     async listUploadsFiles(): Promise<{ name: string; size: number; modified: string; supported: boolean }[]> {

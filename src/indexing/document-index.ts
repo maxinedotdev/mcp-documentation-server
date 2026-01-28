@@ -86,6 +86,10 @@ export class DocumentIndex {
      * Add a document to the index
      */
     addDocument(id: string, filePath: string, content: string, chunks?: any[], title?: string, metadata?: Record<string, any>): void {
+        if (this.documentMap.has(id)) {
+            this.removeDocument(id);
+        }
+
         // Add to document map
         this.documentMap.set(id, filePath);
 
