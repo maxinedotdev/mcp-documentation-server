@@ -26,7 +26,7 @@
     "inspect": "npx fastmcp inspect src/server.ts",
     "promote:staging": "./promote-to-staging.sh",
     "switch:develop": "./switch-to-develop.sh",
-    "test": "echo \"Warning: no test specified\" && exit 0",
+    "test": "npm run test:all",
     "test:unit": "tsx src/vector-db/__tests__/vector-db.test.ts",
     "test:integration": "tsx src/__tests__/integration.test.ts",
     "test:benchmark": "tsx src/__tests__/benchmark.test.ts",

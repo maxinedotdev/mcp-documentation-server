@@ -51,6 +51,8 @@ Example configuration for an MCP client (e.g., Claude Desktop):
       "env": {
             "MCP_BASE_DIR": "/path/to/workspace",  // Optional, custom data directory (default: ~/.saga)
             "MCP_LANCE_DB_PATH": "~/.data/lancedb",  // Optional, custom LanceDB path (default: {dataDir}/lancedb)
+            "MCP_VECTOR_DB": "lance",  // Optional, "lance" or "false" to disable vector DB
+            "MCP_VECTOR_DB_ENABLED": "true",  // Optional alias for enabling/disabling vector DB
             "MCP_EMBEDDING_PROVIDER": "transformers",  // Optional, "transformers" or "openai"
             "MCP_EMBEDDING_MODEL": "Xenova/all-MiniLM-L6-v2",
             "MCP_EMBEDDING_BASE_URL": "http://127.0.0.1:1234",  // Optional, OpenAI-compatible embeddings base URL
@@ -58,6 +60,9 @@ Example configuration for an MCP client (e.g., Claude Desktop):
             "MCP_AI_BASE_URL": "http://127.0.0.1:1234",  // Optional, OpenAI-compatible base URL (LM Studio / synthetic.new)
             "MCP_AI_MODEL": "ministral-3-8b-instruct-2512",  // Optional, defaults based on base URL
             "MCP_AI_API_KEY": "your-api-key-here",  // Optional, required for synthetic.new
+            "MCP_CRAWL_TIMEOUT_MS": "15000",  // Optional, per-request crawl timeout
+            "MCP_CRAWL_MAX_RESPONSE_BYTES": "5242880",  // Optional, max crawl response size
+            "MCP_CRAWL_REQUEST_DELAY_MS": "0",  // Optional, delay between crawl requests
       }
     }
   }
