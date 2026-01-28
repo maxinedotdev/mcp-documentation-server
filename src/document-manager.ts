@@ -573,7 +573,7 @@ export class DocumentManager {
 
         // Get similarity threshold from environment variable
         // Default to 0.0 to allow all results (similarity range is [0, 1])
-        const similarityThreshold = parseFloat(process.env.MCP_SIMILARITY_THRESHOLD || '0.0');
+        const similarityThreshold = this.getSimilarityThreshold();
         console.error(`[DocumentManager] Similarity threshold: ${similarityThreshold}`);
 
         // Use vector database (LanceDB is now the only supported backend)
@@ -621,6 +621,12 @@ export class DocumentManager {
         }
 
         return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+    }
+
+    private getSimilarityThreshold(): number {
+        const raw = process.env.MCP_SIMILARITY_THRESHOLD;
+        const parsed = raw ? Number.parseFloat(raw) : Number.NaN;
+        return Number.isFinite(parsed) ? parsed : 0.0;
     }
 
     private generateId(content: string): string {
@@ -1140,7 +1146,7 @@ export class DocumentManager {
                     console.error(`[DocumentManager] Grouped ${docScoreMap.size} unique documents`);
                     
                     // Convert to results with average scores
-                    const similarityThreshold = parseFloat(process.env.MCP_SIMILARITY_THRESHOLD || '0.3');
+                    const similarityThreshold = this.getSimilarityThreshold();
                     console.error(`[DocumentManager] Similarity threshold: ${similarityThreshold}`);
                     
                     const preFilterResults = Array.from(docScoreMap.entries())
