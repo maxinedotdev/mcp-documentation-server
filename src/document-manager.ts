@@ -23,6 +23,8 @@ export class DocumentManager {
     private documentIndex: DocumentIndex | null = null;
     private vectorDatabase: VectorDatabase | null = null;
     private vectorDbInitPromise: Promise<void> | null = null;
+    private pendingVectorChunks: Map<string, DocumentChunk[]> = new Map();
+    private pendingVectorFlush = false;
     private useIndexing: boolean;
     private useVectorDb: boolean;
     private useParallelProcessing: boolean;
@@ -41,7 +43,15 @@ export class DocumentManager {
 
         // Feature flags with fallback
         this.useIndexing = process.env.MCP_INDEXING_ENABLED !== 'false';
-        this.useVectorDb = process.env.MCP_VECTOR_DB !== 'false';
+        const vectorDbEnv = process.env.MCP_VECTOR_DB;
+        const vectorDbEnabledEnv = process.env.MCP_VECTOR_DB_ENABLED;
+        if (vectorDbEnv !== undefined) {
+            this.useVectorDb = vectorDbEnv !== 'false';
+        } else if (vectorDbEnabledEnv !== undefined) {
+            this.useVectorDb = vectorDbEnabledEnv !== 'false';
+        } else {
+            this.useVectorDb = true;
+        }
         this.useParallelProcessing = process.env.MCP_PARALLEL_ENABLED !== 'false';
         this.useStreaming = process.env.MCP_STREAMING_ENABLED !== 'false';
         this.useTagGeneration = process.env.MCP_TAG_GENERATION_ENABLED === 'true';
@@ -138,7 +148,7 @@ export class DocumentManager {
      * Ensure vector database is initialized before use
      * This waits for async initialization to complete with a timeout
      */
-    private async ensureVectorDbReady(): Promise<boolean> {
+    async ensureVectorDbReady(): Promise<boolean> {
         if (!this.useVectorDb) {
             return false;
         }
@@ -174,7 +184,44 @@ export class DocumentManager {
             return false;
         }
 
+        await this.flushPendingVectorChunks();
         return true;
+    }
+
+    private queueVectorChunks(documentId: string, chunks: DocumentChunk[]): void {
+        if (chunks.length === 0) {
+            return;
+        }
+        this.pendingVectorChunks.set(documentId, chunks);
+        console.error(`[DocumentManager] Queued ${chunks.length} chunks for deferred vector indexing (${documentId})`);
+    }
+
+    private async flushPendingVectorChunks(): Promise<void> {
+        if (this.pendingVectorFlush) {
+            return;
+        }
+        if (!this.useVectorDb || !this.vectorDatabase || this.pendingVectorChunks.size === 0) {
+            return;
+        }
+        const isInitialized = (this.vectorDatabase as any).isInitialized?.() ?? true;
+        if (!isInitialized) {
+            return;
+        }
+
+        this.pendingVectorFlush = true;
+        try {
+            for (const [documentId, chunks] of this.pendingVectorChunks.entries()) {
+                try {
+                    await this.vectorDatabase.addChunks(chunks);
+                    this.pendingVectorChunks.delete(documentId);
+                    console.error(`[DocumentManager] Flushed ${chunks.length} deferred chunks to vector DB (${documentId})`);
+                } catch (error) {
+                    console.error(`[DocumentManager] Failed to flush deferred chunks for ${documentId}:`, error);
+                }
+            }
+        } finally {
+            this.pendingVectorFlush = false;
+        }
     }
 
     private ensureDataDir(): void {
@@ -322,22 +369,6 @@ export class DocumentManager {
             try {
                 console.error(`[DocumentManager] Adding chunks to vector DB - useVectorDb: ${this.useVectorDb}, vectorDatabase exists: ${!!this.vectorDatabase}`);
 
-                // Ensure vector DB is ready before adding chunks
-                const vectorDbReady = await this.ensureVectorDbReady();
-                if (!vectorDbReady) {
-                    console.error('[DocumentManager] Vector DB not ready, skipping chunk indexing');
-                    console.error('[DocumentManager] This will cause new documents to be unsearchable!');
-                    console.error('[DocumentManager] Possible causes: initialization timeout, init failure, or isInitialized() returning false');
-                    return document;
-                }
-
-                // Check if vector DB is initialized (diagnostic)
-                const isInitialized = (this.vectorDatabase as any).isInitialized?.() ?? true;
-                console.error(`[DocumentManager] Vector DB initialized: ${isInitialized}`);
-                if (!isInitialized) {
-                    console.error('[DocumentManager] CRITICAL: Vector DB reports not initialized even after ensureVectorDbReady() returned true!');
-                }
-
                 // Filter chunks that have embeddings
                 const chunksWithEmbeddings = chunks.filter(chunk => chunk.embeddings && chunk.embeddings.length > 0);
                 console.error(`[DocumentManager] Total chunks: ${chunks.length}, Chunks with embeddings: ${chunksWithEmbeddings.length}`);
@@ -348,6 +379,22 @@ export class DocumentManager {
                     chunksWithoutEmbeddings.forEach((chunk, idx) => {
                         console.error(`  [${idx}] chunk_id: ${chunk.id}, chunk_index: ${chunk.chunk_index}, content_length: ${chunk.content.length}, embeddings: ${chunk.embeddings ? chunk.embeddings.length : 'null'}`);
                     });
+                }
+
+                // Ensure vector DB is ready before adding chunks
+                const vectorDbReady = await this.ensureVectorDbReady();
+                if (!vectorDbReady) {
+                    console.error('[DocumentManager] Vector DB not ready, queueing chunk indexing');
+                    console.error('[DocumentManager] Possible causes: initialization timeout, init failure, or isInitialized() returning false');
+                    this.queueVectorChunks(id, chunksWithEmbeddings);
+                    return document;
+                }
+
+                // Check if vector DB is initialized (diagnostic)
+                const isInitialized = (this.vectorDatabase as any).isInitialized?.() ?? true;
+                console.error(`[DocumentManager] Vector DB initialized: ${isInitialized}`);
+                if (!isInitialized) {
+                    console.error('[DocumentManager] CRITICAL: Vector DB reports not initialized even after ensureVectorDbReady() returned true!');
                 }
 
                 if (chunksWithEmbeddings.length > 0) {
@@ -952,6 +999,7 @@ export class DocumentManager {
 
     async deleteDocument(documentId: string): Promise<boolean> {
         try {
+            this.pendingVectorChunks.delete(documentId);
             const documentPath = this.getDocumentPath(documentId);
             let deletedMainFile = false;
 

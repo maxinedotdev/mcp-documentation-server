@@ -106,6 +106,11 @@ export class SearchEngine {
                 console.warn('[SearchEngine] Vector database not available for code block search');
                 return [];
             }
+            const vectorDbReady = await this.documentManager.ensureVectorDbReady();
+            if (!vectorDbReady) {
+                console.warn('[SearchEngine] Vector database not ready for code block search');
+                return [];
+            }
 
             // Check if the vector database supports code block search
             const searchCodeBlocksMethod = vectorDatabase.searchCodeBlocks;
@@ -134,6 +139,11 @@ export class SearchEngine {
             const vectorDatabase = (this.documentManager as any).vectorDatabase;
             if (!vectorDatabase) {
                 console.warn('[SearchEngine] Vector database not available for getting code blocks');
+                return [];
+            }
+            const vectorDbReady = await this.documentManager.ensureVectorDbReady();
+            if (!vectorDbReady) {
+                console.warn('[SearchEngine] Vector database not ready for getting code blocks');
                 return [];
             }
 
