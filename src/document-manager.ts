@@ -338,7 +338,7 @@ export class DocumentManager {
             id,
             title,
             content,
-            metadata,
+            metadata: { ...metadata },  // Create a copy instead of reference
             chunks,
             created_at: now,
             updated_at: now,
@@ -666,7 +666,10 @@ export class DocumentManager {
                     // Update document metadata with generated tags
                     const document = await this.getDocument(documentId);
                     if (document) {
-                        document.metadata.tags_generated = tags;
+                        document.metadata = {
+                            ...document.metadata,
+                            tags_generated: tags
+                        };
                         document.updated_at = new Date().toISOString();
                         
                         // Save updated document
