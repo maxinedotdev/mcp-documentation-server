@@ -3,6 +3,7 @@
  * Tests for integration with Lance DB (tasks 9.4, 9.5)
  */
 
+import './setup.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';

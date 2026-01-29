@@ -3,6 +3,7 @@
  * Tests for LanceDBAdapter
  */
 
+import '../../__tests__/setup.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';

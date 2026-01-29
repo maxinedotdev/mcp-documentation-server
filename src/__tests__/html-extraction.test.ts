@@ -2,6 +2,7 @@
  * Unit tests for Cheerio-based HTML extraction
  */
 
+import './setup.js';
 import assert from 'assert';
 import { extractHtmlContent, looksLikeHtml } from '../html-extraction.js';
 

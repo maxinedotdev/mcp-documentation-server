@@ -3,6 +3,7 @@
  * Tests for multi-language code block detection and extraction
  */
 
+import './setup.js';
 import assert from 'assert';
 import { extractCodeBlocks, normalizeLanguageTag } from '../documentation-crawler.js';
 

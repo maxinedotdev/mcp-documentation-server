@@ -3,6 +3,7 @@
  * Tests for global search ranking, hybrid ranking, pagination, and metadata filtering
  */
 
+import './setup.js';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';

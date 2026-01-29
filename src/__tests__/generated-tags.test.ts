@@ -3,6 +3,7 @@
  * Tests for optional tag generation, non-blocking behavior, and different document types
  */
 
+import './setup.js';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';

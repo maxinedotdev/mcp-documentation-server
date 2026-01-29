@@ -3,6 +3,7 @@
  * Tests for pagination behavior, response shape consistency, and MCP tool integration
  */
 
+import './setup.js';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';

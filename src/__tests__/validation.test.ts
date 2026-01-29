@@ -3,6 +3,7 @@
  * Tests for tasks 12.1-12.6
  */
 
+import './setup.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
