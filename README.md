@@ -138,6 +138,32 @@ MCP_AI_BASE_URL=https://api.synthetic.new/openai/v1
 MCP_AI_API_KEY=your-api-key
 ```
 
+## Troubleshooting
+
+### MCP Server Keeps Restarting
+
+**Symptom**: VS Code shows MCP server continuously restarting
+
+**Common causes**:
+- LanceDB data corruption in `~/.saga/lancedb/`
+- Embedding provider not running (e.g., LM Studio on port 1234)
+- Missing or incorrect environment variables
+
+**Solutions**:
+1. **Clear LanceDB data**: `rm -rf ~/.saga/lancedb/`
+2. **Verify embedding endpoint**: 
+   ```bash
+   curl http://127.0.0.1:1234/v1/embeddings \
+     -H "Content-Type: application/json" \
+     -d '{"input": ["test"], "model": "text-embedding-nomic-embed-text-v1.5"}'
+   ```
+3. **Check VS Code MCP logs**: Open Output panel → Select "MCP Documentation Server"
+4. **Restart VS Code** after applying fixes
+
+### Graceful Degradation
+
+If the vector database fails to initialize, the server will continue running without vector search capabilities. Document management tools (add, list, delete) remain functional, but semantic search will be unavailable. Check the MCP logs to identify and resolve the underlying issue.
+
 ## Storage Layout
 
 ```
