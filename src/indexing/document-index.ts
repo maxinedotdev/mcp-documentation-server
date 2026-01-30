@@ -31,6 +31,7 @@ export class DocumentIndex {
     private tagIndex = new Map<string, Set<string>>(); // tag -> docIds
     private sourceIndex = new Map<string, Set<string>>(); // source -> docIds
     private crawlIdIndex = new Map<string, Set<string>>(); // crawl_id -> docIds
+    private languageIndex = new Map<string, Set<string>>(); // language -> docIds
     private documentSearchFields = new Map<string, DocumentSearchFields>(); // docId -> search fields
     
     private initialized = false;
@@ -256,6 +257,28 @@ export class DocumentIndex {
     }
 
     /**
+     * Search documents by language
+     */
+    searchByLanguage(language: string): Set<string> {
+        return this.languageIndex.get(language.toLowerCase()) || new Set();
+    }
+
+    /**
+     * Search documents by multiple languages (union)
+     */
+    searchByLanguages(languages: string[]): Set<string> {
+        if (languages.length === 0) return new Set();
+
+        const results = new Set<string>();
+        for (const lang of languages) {
+            const langDocs = this.languageIndex.get(lang.toLowerCase()) || new Set();
+            langDocs.forEach(docId => results.add(docId));
+        }
+
+        return results;
+    }
+
+    /**
      * Search documents by title keywords
      */
     searchByTitle(title: string): Set<string> {
@@ -397,6 +420,20 @@ export class DocumentIndex {
             }
             this.crawlIdIndex.get(sourceMetadata.crawl_id)!.add(docId);
         }
+
+        // Index languages from metadata
+        const languages = metadata?.languages;
+        if (Array.isArray(languages)) {
+            for (const lang of languages) {
+                if (typeof lang === 'string' && lang.length > 0) {
+                    const langLower = lang.toLowerCase();
+                    if (!this.languageIndex.has(langLower)) {
+                        this.languageIndex.set(langLower, new Set());
+                    }
+                    this.languageIndex.get(langLower)!.add(docId);
+                }
+            }
+        }
     }
 
     /**
@@ -448,6 +485,19 @@ export class DocumentIndex {
                 crawlDocs.delete(docId);
                 if (crawlDocs.size === 0) {
                     this.crawlIdIndex.delete(searchFields.source_metadata.crawl_id);
+                }
+            }
+        }
+
+        // Remove from language index
+        // Note: We need to check the document's stored languages from searchFields or metadata
+        // Since we don't have direct access to languages in searchFields, we check if the document
+        // exists in any language sets and remove it
+        for (const [lang, docIds] of this.languageIndex.entries()) {
+            if (docIds.has(docId)) {
+                docIds.delete(docId);
+                if (docIds.size === 0) {
+                    this.languageIndex.delete(lang);
                 }
             }
         }
@@ -512,6 +562,9 @@ export class DocumentIndex {
             crawlIdIndex: Object.fromEntries(
                 Array.from(this.crawlIdIndex.entries()).map(([key, value]) => [key, Array.from(value)])
             ),
+            languageIndex: Object.fromEntries(
+                Array.from(this.languageIndex.entries()).map(([key, value]) => [key, Array.from(value)])
+            ),
             documentSearchFields: Object.fromEntries(this.documentSearchFields),
             lastUpdated: new Date().toISOString()
         };
@@ -574,6 +627,11 @@ export class DocumentIndex {
                 Object.entries(indexData.crawlIdIndex).map(([key, value]) => [key, new Set(value as string[])])
             );
         }
+        if (indexData.languageIndex) {
+            this.languageIndex = new Map(
+                Object.entries(indexData.languageIndex).map(([key, value]) => [key, new Set(value as string[])])
+            );
+        }
         if (indexData.documentSearchFields) {
             this.documentSearchFields = new Map(Object.entries(indexData.documentSearchFields || {}));
         }
@@ -598,6 +656,7 @@ export class DocumentIndex {
         this.tagIndex.clear();
         this.sourceIndex.clear();
         this.crawlIdIndex.clear();
+        this.languageIndex.clear();
         this.documentSearchFields.clear();
 
         try {

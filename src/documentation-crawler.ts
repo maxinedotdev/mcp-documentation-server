@@ -3,6 +3,7 @@ import { normalizeText } from './utils.js';
 import { randomUUID } from 'crypto';
 import { decodeHtmlEntities, extractHtmlContent } from './html-extraction.js';
 import type { CodeBlock } from './types.js';
+import { detectLanguages, getAcceptedLanguages, getLanguageConfidenceThreshold, isLanguageAllowed, parseLanguageList } from './language-detection.js';
 
 const DEFAULT_USER_AGENT = 'MCP-Documentation-Server/1.0';
 const MAX_SITEMAP_FETCHES = 10;
@@ -26,6 +27,7 @@ export type CrawlOptions = {
     maxPages: number;
     maxDepth: number;
     sameDomainOnly: boolean;
+    accepted_languages?: string[]; // Override for MCP_ACCEPTED_LANGUAGES
 };
 
 export type CrawlResult = {
@@ -59,6 +61,11 @@ export async function crawlDocumentation(
     const requestTimeoutMs = parsePositiveInt(process.env.MCP_CRAWL_TIMEOUT_MS, DEFAULT_CRAWL_TIMEOUT_MS);
     const maxResponseBytes = parsePositiveInt(process.env.MCP_CRAWL_MAX_RESPONSE_BYTES, DEFAULT_CRAWL_MAX_RESPONSE_BYTES);
     const requestDelayMs = parsePositiveInt(process.env.MCP_CRAWL_REQUEST_DELAY_MS, DEFAULT_CRAWL_REQUEST_DELAY_MS);
+
+    // Determine accepted languages for this crawl
+    // Use per-crawl override if provided, otherwise fall back to environment variable
+    const acceptedLanguages = options.accepted_languages ?? getAcceptedLanguages();
+    const confidenceThreshold = getLanguageConfidenceThreshold();
 
     const queue: CrawlQueueItem[] = [{ url: seed.toString(), depth: 0 }];
     const queued = new Set<string>([normalizeUrlForSet(seed)]);
@@ -157,6 +164,14 @@ export async function crawlDocumentation(
                 continue;
             }
 
+            // Detect language and check allowlist before ingestion
+            const detectedLanguages = detectLanguages(normalizedText, confidenceThreshold);
+            if (!isLanguageAllowed(detectedLanguages, acceptedLanguages)) {
+                console.warn(`[Crawler] Page rejected: language '${detectedLanguages.join(', ')}' not in accepted languages list (${parsedUrl.toString()})`);
+                pagesSkipped += 1;
+                continue;
+            }
+
             const document = await manager.addDocument(title, normalizedText, {
                 source: 'crawl',
                 crawl_id: crawlId,
@@ -165,7 +180,14 @@ export async function crawlDocumentation(
                 fetched_at: new Date().toISOString(),
                 contentType: contentType || 'text/plain',
                 untrusted: true,
+                languages: detectedLanguages,
             });
+
+            // Skip if document was rejected by addDocument (e.g., language check)
+            if (!document) {
+                pagesSkipped += 1;
+                continue;
+            }
 
             // Add code blocks if any were extracted
             if (codeBlocks && codeBlocks.length > 0) {

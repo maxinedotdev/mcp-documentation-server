@@ -12,6 +12,7 @@ import { DocumentIndex } from './indexing/document-index.js';
 import { extractMarkdownCodeBlocks } from './markdown-code-blocks.js';
 import type { VectorDatabase } from './vector-db/lance-db.js';
 import { createVectorDatabase, migrateFromJson } from './vector-db/index.js';
+import { detectLanguages, getAcceptedLanguages, getLanguageConfidenceThreshold, isLanguageAllowed, getDefaultQueryLanguages } from './language-detection.js';
 
 /**
  * Document manager that handles document operations with chunking, indexing, and embeddings
@@ -258,9 +259,20 @@ export class DocumentManager {
         return path.join(this.dataDir, `${id}.md`);
     }
 
-    async addDocument(title: string, content: string, metadata: Record<string, any> = {}): Promise<Document> {
+    async addDocument(title: string, content: string, metadata: Record<string, any> = {}): Promise<Document | null> {
         const id = this.generateId(content);
         const now = new Date().toISOString();
+
+        // Detect language and check allowlist
+        const confidenceThreshold = getLanguageConfidenceThreshold();
+        const detectedLanguages = detectLanguages(content, confidenceThreshold);
+        const acceptedLanguages = getAcceptedLanguages();
+        
+        // Check if language is allowed (skip ingestion if not)
+        if (!isLanguageAllowed(detectedLanguages, acceptedLanguages)) {
+            console.warn(`[DocumentManager] Document rejected: language '${detectedLanguages.join(', ')}' not in accepted languages list`);
+            return null;
+        }
 
         const existingDocument = await this.getDocument(id);
         if (existingDocument) {
@@ -269,6 +281,10 @@ export class DocumentManager {
                     ...existingDocument.metadata,
                     ...metadata,
                 };
+                // Update languages if not already present
+                if (!existingDocument.metadata.languages) {
+                    existingDocument.metadata.languages = detectedLanguages;
+                }
                 existingDocument.updated_at = now;
                 const filePath = this.getDocumentPath(id);
                 await writeFile(filePath, JSON.stringify(existingDocument, null, 2));
@@ -334,11 +350,17 @@ export class DocumentManager {
             });
         }
 
+        // Add detected languages to metadata
+        const metadataWithLanguages = {
+            ...metadata,
+            languages: detectedLanguages,
+        };
+
         const document: Document = {
             id,
             title,
             content,
-            metadata: { ...metadata },  // Create a copy instead of reference
+            metadata: metadataWithLanguages,
             chunks,
             created_at: now,
             updated_at: now,
@@ -959,6 +981,12 @@ export class DocumentManager {
                         processedAt: new Date().toISOString()
                     });
 
+                    // Skip if document was rejected (e.g., language not allowed)
+                    if (!document) {
+                        errors.push(`File ${fileName} was rejected (possibly due to language restrictions)`);
+                        continue;
+                    }
+
                     // Copy original file to data directory with same name as JSON file (keep backup in uploads)
                     const documentId = document.id;
                     const destinationFileName = `${documentId}${fileExtension}`;
@@ -1104,6 +1132,15 @@ export class DocumentManager {
         const offset = options.offset ?? 0;
         const includeMetadata = options.include_metadata ?? true;
         const filters = options.filters ?? {};
+
+        // Apply default language filters if not specified
+        if (!filters.languages) {
+            const defaultLanguages = getDefaultQueryLanguages();
+            if (defaultLanguages) {
+                filters.languages = defaultLanguages;
+                console.error(`[DocumentManager] Applying default language filter: ${defaultLanguages.join(', ')}`);
+            }
+        }
 
         console.error(`[DocumentManager] query START - queryText: "${queryText}", limit: ${limit}, offset: ${offset}`);
         console.error(`[DocumentManager] useVectorDb: ${this.useVectorDb}, vectorDatabase exists: ${!!this.vectorDatabase}`);
@@ -1310,6 +1347,26 @@ export class DocumentManager {
             const contentType = docMetadata.contentType || docMetadata.content_type;
             if (contentType !== filters.contentType) {
                 return false;
+            }
+        }
+
+        // Language filter
+        if (filters.languages && filters.languages.length > 0) {
+            const docLanguages = docMetadata.languages;
+            if (!docLanguages || docLanguages.length === 0) {
+                // Document has no language metadata, only match if 'unknown' is in filter
+                if (!filters.languages.includes('unknown')) {
+                    return false;
+                }
+            } else {
+                // Check if any document language matches the filter
+                const hasMatchingLanguage = filters.languages.some(lang =>
+                    docLanguages.includes(lang) ||
+                    (lang === 'unknown' && docLanguages.includes('unknown'))
+                );
+                if (!hasMatchingLanguage) {
+                    return false;
+                }
             }
         }
 
