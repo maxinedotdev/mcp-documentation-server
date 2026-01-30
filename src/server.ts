@@ -482,6 +482,7 @@ server.addTool({
             crawl_id: z.string().optional().describe("Filter by crawl session ID"),
             author: z.string().optional().describe("Filter by document author"),
             contentType: z.string().optional().describe("Filter by content type"),
+            languages: z.array(z.string()).optional().describe("Filter by language codes (ISO 639-1, e.g., 'en', 'es', 'fr'). Defaults to MCP_DEFAULT_QUERY_LANGUAGES or MCP_ACCEPTED_LANGUAGES if not specified."),
         }).optional().describe("Optional metadata filters to apply"),
     }),
     execute: async (args) => {

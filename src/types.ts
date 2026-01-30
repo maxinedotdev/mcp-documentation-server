@@ -190,6 +190,7 @@ export interface MetadataFilter {
     crawl_id?: string;
     author?: string;
     contentType?: string;
+    languages?: string[]; // Filter by language codes (ISO 639-1)
     [key: string]: any;
 }
 
