@@ -17,7 +17,7 @@ function getModelDimensions(modelName: string): number {
 }
 
 const DEFAULT_LOCAL_OPENAI_BASE_URL = 'http://127.0.0.1:1234';
-const DEFAULT_OPENAI_EMBEDDING_MODEL = 'text-embedding-nomic-embed-text-v1.5';
+const DEFAULT_OPENAI_EMBEDDING_MODEL = 'text-embedding-multilingual-e5-large-instruct';
 
 type EmbeddingProviderType = 'transformers' | 'openai';
 
