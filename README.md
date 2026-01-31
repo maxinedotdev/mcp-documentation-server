@@ -155,7 +155,7 @@ MCP_AI_API_KEY=your-api-key
    ```bash
    curl http://127.0.0.1:1234/v1/embeddings \
      -H "Content-Type: application/json" \
-     -d '{"input": ["test"], "model": "text-embedding-nomic-embed-text-v1.5"}'
+     -d '{"input": ["test"], "model": "text-embedding-multilingual-e5-large-instruct"}'
    ```
 3. **Check VS Code MCP logs**: Open Output panel → Select "MCP Documentation Server"
 4. **Restart VS Code** after applying fixes
