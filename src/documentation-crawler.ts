@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import { decodeHtmlEntities, extractHtmlContent } from './html-extraction.js';
 import type { CodeBlock } from './types.js';
 import { detectLanguages, getAcceptedLanguages, getLanguageConfidenceThreshold, isLanguageAllowed, parseLanguageList } from './language-detection.js';
+import { fetchWithTimeout } from './utils/http-timeout.js';
 
 const DEFAULT_USER_AGENT = 'MCP-Documentation-Server/1.0';
 const MAX_SITEMAP_FETCHES = 10;
@@ -131,7 +132,8 @@ export async function crawlDocumentation(
                     'User-Agent': DEFAULT_USER_AGENT,
                     'Accept': 'text/html, text/plain, text/markdown, application/json, application/xml;q=0.9, */*;q=0.1',
                 },
-            }, requestTimeoutMs);
+                timeoutMs: requestTimeoutMs,
+            });
 
             if (!response.ok) {
                 pagesSkipped += 1;
@@ -292,20 +294,6 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
 function sleep(ms: number): Promise<void> {
     if (ms <= 0) return Promise.resolve();
     return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
-    if (!timeoutMs || timeoutMs <= 0) {
-        return fetch(url, options);
-    }
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-        return await fetch(url, { ...options, signal: controller.signal });
-    } finally {
-        clearTimeout(timeoutId);
-    }
 }
 
 async function readResponseTextWithLimit(response: Response, maxBytes: number): Promise<string> {
