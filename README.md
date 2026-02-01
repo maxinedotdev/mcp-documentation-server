@@ -124,6 +124,48 @@ Configure via environment variables:
 | `MCP_TAG_GENERATION_ENABLED` | Auto-generate tags with AI | `false` |
 | `MCP_SIMILARITY_THRESHOLD` | Min similarity score (0.0-1.0) | `0.3` |
 
+### Request Timeouts
+
+The server supports configurable HTTP request timeouts to handle slow or unresponsive providers. All timeout values are in milliseconds.
+
+**Timeout Hierarchy** (from highest to lowest priority):
+1. **Operation-specific timeout** (e.g., `MCP_AI_SEARCH_TIMEOUT_MS`)
+2. **Global timeout** (`MCP_REQUEST_TIMEOUT_MS`)
+3. **Default** (30000ms = 30 seconds)
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MCP_REQUEST_TIMEOUT_MS` | Global timeout for all HTTP requests | `30000` |
+| `MCP_AI_SEARCH_TIMEOUT_MS` | Timeout for AI search requests (`search_documents_with_ai`) | Global timeout |
+| `MCP_EMBEDDING_TIMEOUT_MS` | Timeout for embedding generation requests | Global timeout |
+
+**Timeout Error Behavior:**
+
+When a request exceeds its timeout, a `RequestTimeoutError` is thrown with details:
+- Error message includes the timeout duration and URL
+- The `isTimeout` property is set to `true` for programmatic detection
+- Provider health tracking marks the failure and may trigger fallback to other providers (in multi-provider mode)
+
+**Example Configurations:**
+
+```env
+# Fast local setup (15 second global timeout)
+MCP_REQUEST_TIMEOUT_MS=15000
+
+# Slow remote APIs (60 second global timeout)
+MCP_REQUEST_TIMEOUT_MS=60000
+
+# Different timeouts per operation
+MCP_REQUEST_TIMEOUT_MS=30000        # 30s default
+MCP_AI_SEARCH_TIMEOUT_MS=120000     # 2 min for AI search (slow LLMs)
+MCP_EMBEDDING_TIMEOUT_MS=45000      # 45s for embeddings
+```
+
+**Validation:**
+- Values must be positive integers (e.g., `30000`, not `30s`)
+- Non-numeric, zero, or negative values are rejected with a warning
+- Invalid values fall back to the next level in the hierarchy
+
 ### LLM Provider Examples
 
 **LM Studio (local)**:
