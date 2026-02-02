@@ -2,122 +2,174 @@
  * Unit tests for Cheerio-based HTML extraction
  */
 
-import './setup.js';
-import assert from 'assert';
+import { describe, it, expect } from 'vitest';
 import { extractHtmlContent, looksLikeHtml } from '../html-extraction.js';
 
-async function testHtmlDetection() {
-    console.log('\n=== Test: HTML Detection ===');
+describe('HTML Extraction', () => {
+    describe('HTML Detection', () => {
+        it('should detect HTML tags', () => {
+            expect(looksLikeHtml('<html><body></body></html>')).toBe(true);
+        });
 
-    assert.strictEqual(looksLikeHtml('<html><body></body></html>'), true, 'Should detect HTML tags');
-    assert.strictEqual(looksLikeHtml('plain text content'), false, 'Should reject plain text');
+        it('should reject plain text', () => {
+            expect(looksLikeHtml('plain text content')).toBe(false);
+        });
+    });
 
-    console.log('✓ HTML detection tests passed');
-}
+    describe('Title and Text Extraction', () => {
+        it('should extract and decode title', () => {
+            const html = `
+                <!doctype html>
+                <html>
+                <head><title>Doc & Title</title></head>
+                <body>
+                    <nav>SHOULD-NOT-INCLUDE</nav>
+                    <main>
+                        <h1>Heading</h1>
+                        <p>Paragraph text.</p>
+                        <script>malicious()</script>
+                        <style>.hidden{display:none;}</style>
+                    </main>
+                </body>
+                </html>
+            `;
 
-async function testTitleAndTextExtraction() {
-    console.log('\n=== Test: Title and Text Extraction ===');
+            const result = extractHtmlContent(html, { sourceUrl: 'https://example.com/docs/intro' });
 
-    const html = `
-        <!doctype html>
-        <html>
-        <head><title>Doc &amp; Title</title></head>
-        <body>
-            <nav>SHOULD-NOT-INCLUDE</nav>
-            <main>
-                <h1>Heading</h1>
-                <p>Paragraph text.</p>
-                <script>malicious()</script>
-                <style>.hidden{display:none;}</style>
-            </main>
-        </body>
-        </html>
-    `;
+            expect(result.title).toBe('Doc & Title');
+        });
 
-    const result = extractHtmlContent(html, { sourceUrl: 'https://example.com/docs/intro' });
+        it('should include visible text', () => {
+            const html = `
+                <html>
+                <body>
+                    <main>
+                        <h1>Heading</h1>
+                        <p>Paragraph text.</p>
+                    </main>
+                </body>
+                </html>
+            `;
 
-    assert.strictEqual(result.title, 'Doc & Title', 'Should extract and decode title');
-    assert(result.text.includes('Heading'), 'Should include visible text');
-    assert(result.text.includes('Paragraph text.'), 'Should include paragraph text');
-    assert(!result.text.includes('malicious()'), 'Should remove script contents');
-    assert(!result.text.includes('SHOULD-NOT-INCLUDE'), 'Should remove nav content');
+            const result = extractHtmlContent(html, { sourceUrl: 'https://example.com/docs/intro' });
 
-    console.log('✓ Title and text extraction tests passed');
-}
+            expect(result.text).toContain('Heading');
+            expect(result.text).toContain('Paragraph text.');
+        });
 
-async function testLinkAndCodeExtraction() {
-    console.log('\n=== Test: Link and Code Extraction ===');
+        it('should remove script contents', () => {
+            const html = `
+                <html>
+                <body>
+                    <script>malicious()</script>
+                </body>
+                </html>
+            `;
 
-    const html = `
-        <html>
-        <head></head>
-        <body>
-            <a href="/docs/start">Docs</a>
-            <a href="https://example.com/abs">Absolute</a>
-            <a href="mailto:test@example.com">Mail</a>
-            <a href="javascript:alert('x')">Script</a>
-            <a href="#section">Anchor</a>
-            <pre><code class="language-js">const x = 1;</code></pre>
-        </body>
-        </html>
-    `;
+            const result = extractHtmlContent(html, { sourceUrl: 'https://example.com/docs/intro' });
 
-    const result = extractHtmlContent(html, { sourceUrl: 'https://example.com/base/' });
+            expect(result.text).not.toContain('malicious()');
+        });
 
-    const expectedLinks = new Set([
-        'https://example.com/docs/start',
-        'https://example.com/abs',
-    ]);
+        it('should remove nav content', () => {
+            const html = `
+                <html>
+                <body>
+                    <nav>SHOULD-NOT-INCLUDE</nav>
+                    <main>Content</main>
+                </body>
+                </html>
+            `;
 
-    assert.strictEqual(result.links.length, expectedLinks.size, 'Should extract expected links');
-    result.links.forEach(link => assert(expectedLinks.has(link), 'Unexpected link extracted'));
+            const result = extractHtmlContent(html, { sourceUrl: 'https://example.com/docs/intro' });
 
-    assert.strictEqual(result.codeBlocks.length, 1, 'Should extract one code block');
-    assert.strictEqual(result.codeBlocks[0].language, 'javascript', 'Should normalize language');
-    assert.strictEqual(result.codeBlocks[0].content, 'const x = 1;', 'Should extract code block content');
+            expect(result.text).not.toContain('SHOULD-NOT-INCLUDE');
+        });
+    });
 
-    console.log('✓ Link and code extraction tests passed');
-}
+    describe('Link and Code Extraction', () => {
+        it('should extract expected links', () => {
+            const html = `
+                <html>
+                <body>
+                    <a href="/docs/start">Docs</a>
+                    <a href="https://example.com/abs">Absolute</a>
+                    <a href="mailto:test@example.com">Mail</a>
+                    <a href="javascript:alert('x')">Script</a>
+                    <a href="#section">Anchor</a>
+                </body>
+                </html>
+            `;
 
-async function testTitleFallbackFromUrl() {
-    console.log('\n=== Test: Title Fallback from URL ===');
+            const result = extractHtmlContent(html, { sourceUrl: 'https://example.com/base/' });
 
-    const html = `
-        <html>
-        <body>
-            <p>Content</p>
-        </body>
-        </html>
-    `;
+            const expectedLinks = new Set([
+                'https://example.com/docs/start',
+                'https://example.com/abs',
+            ]);
 
-    const result = extractHtmlContent(html, { sourceUrl: 'https://example.com/path/to/page' });
-    assert.strictEqual(result.title, 'page', 'Should derive title from URL when missing');
+            expect(result.links.length).toBe(expectedLinks.size);
+            result.links.forEach(link => {
+                expect(expectedLinks.has(link)).toBe(true);
+            });
+        });
 
-    console.log('✓ Title fallback tests passed');
-}
+        it('should extract one code block', () => {
+            const html = `
+                <html>
+                <body>
+                    <pre><code class="language-js">const x = 1;</code></pre>
+                </body>
+                </html>
+            `;
 
-async function runHtmlExtractionTests() {
-    console.log('╔═══════════════════════════════════════════════════════════╗');
-    console.log('║  HTML Extraction Unit Tests                               ║');
-    console.log('╚═══════════════════════════════════════════════════════════╝');
+            const result = extractHtmlContent(html, { sourceUrl: 'https://example.com/base/' });
 
-    try {
-        await testHtmlDetection();
-        await testTitleAndTextExtraction();
-        await testLinkAndCodeExtraction();
-        await testTitleFallbackFromUrl();
+            expect(result.codeBlocks.length).toBe(1);
+        });
 
-        console.log('\n╔═══════════════════════════════════════════════════════════╗');
-        console.log('║  ✓ All HTML extraction tests passed!                      ║');
-        console.log('╚═══════════════════════════════════════════════════════════╝\n');
-    } catch (error) {
-        console.error('\n✗ Test failed:', error);
-        process.exit(1);
-    }
-}
+        it('should normalize language', () => {
+            const html = `
+                <html>
+                <body>
+                    <pre><code class="language-js">const x = 1;</code></pre>
+                </body>
+                </html>
+            `;
 
-if (import.meta.url === `file://${process.argv[1]}`) {
-    runHtmlExtractionTests();
-}
+            const result = extractHtmlContent(html, { sourceUrl: 'https://example.com/base/' });
 
-export { runHtmlExtractionTests };
+            expect(result.codeBlocks[0].language).toBe('javascript');
+        });
+
+        it('should extract code block content', () => {
+            const html = `
+                <html>
+                <body>
+                    <pre><code class="language-js">const x = 1;</code></pre>
+                </body>
+                </html>
+            `;
+
+            const result = extractHtmlContent(html, { sourceUrl: 'https://example.com/base/' });
+
+            expect(result.codeBlocks[0].content).toBe('const x = 1;');
+        });
+    });
+
+    describe('Title Fallback from URL', () => {
+        it('should derive title from URL when missing', () => {
+            const html = `
+                <html>
+                <body>
+                    <p>Content</p>
+                </body>
+                </html>
+            `;
+
+            const result = extractHtmlContent(html, { sourceUrl: 'https://example.com/path/to/page' });
+
+            expect(result.title).toBe('page');
+        });
+    });
+});
