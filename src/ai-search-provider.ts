@@ -424,7 +424,21 @@ async function searchWithOpenAi(
         throw new Error(`Document with ID '${documentId}' not found. Use 'list_documents' to get available document IDs.`);
     }
 
-    const searchResults = await manager.searchDocuments(documentId, query, config.maxChunks);
+    // Search within a specific document using vector database
+    await manager.ensureVectorDbReady();
+    const vectorDatabase = (manager as any).vectorDatabase;
+    if (!vectorDatabase) {
+        throw new Error('Vector database is not available. Enable MCP_VECTOR_DB=true to use AI search.');
+    }
+
+    // Generate query embedding
+    const embeddingProvider = (manager as any).embeddingProvider;
+    const queryEmbedding = await embeddingProvider.generateEmbedding(query);
+
+    // Search with document filter
+    const filter = `document_id = '${documentId}'`;
+    const searchResults = await vectorDatabase.search(queryEmbedding, config.maxChunks, filter);
+
     if (searchResults.length === 0) {
         return {
             search_results: 'No relevant content found in the document for the given query.',

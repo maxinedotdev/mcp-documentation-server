@@ -271,7 +271,21 @@ server.addTool({
             // Use environment variable for default limit if not provided
             const defaultLimit = parseInt(process.env.MCP_MAX_SEARCH_RESULTS || '10');
             const limit = args.limit || defaultLimit;
-            const results = await manager.searchDocuments(args.document_id, args.query, limit);
+            
+            // Search within a specific document using vector database
+            await manager.ensureVectorDbReady();
+            const vectorDatabase = (manager as any).vectorDatabase;
+            if (!vectorDatabase) {
+                throw new Error('Vector database is not available. Enable MCP_VECTOR_DB=true to use document search.');
+            }
+            
+            // Generate query embedding
+            const embeddingProvider = createLazyEmbeddingProvider(process.env.MCP_EMBEDDING_MODEL);
+            const queryEmbedding = await embeddingProvider.generateEmbedding(args.query);
+            
+            // Search with document filter
+            const filter = `document_id = '${args.document_id}'`;
+            const results = await vectorDatabase.search(queryEmbedding, limit, filter);
 
             if (results.length === 0) {
                 return "No chunks found matching your query in the specified document.";
@@ -629,15 +643,24 @@ server.addTool({
     execute: async (args) => {
         try {
             const manager = await initializeDocumentManager();
+            
+            // Ensure vector database is ready
+            await manager.ensureVectorDbReady();
+            
+            const vectorDatabase = (manager as any).vectorDatabase;
+            if (!vectorDatabase) {
+                throw new Error('Vector database is not available. Enable MCP_VECTOR_DB=true to use code block search.');
+            }
+            
+            // Generate query embedding
             const embeddingProvider = createLazyEmbeddingProvider(process.env.MCP_EMBEDDING_MODEL);
-            const { SearchEngine } = await import('./search-engine.js');
-            const searchEngine = new SearchEngine(manager, embeddingProvider);
-
+            const queryEmbedding = await embeddingProvider.generateEmbedding(args.query);
+            
             // Use environment variable for default limit if not provided
             const defaultLimit = parseInt(process.env.MCP_MAX_SEARCH_RESULTS || '10');
             const limit = args.limit || defaultLimit;
 
-            const results = await searchEngine.searchCodeBlocks(args.query, limit, args.language);
+            const results = await vectorDatabase.searchCodeBlocks(queryEmbedding, limit, args.language);
 
             if (results.length === 0) {
                 return args.language
@@ -679,17 +702,22 @@ server.addTool({
     execute: async (args) => {
         try {
             const manager = await initializeDocumentManager();
-            const embeddingProvider = createLazyEmbeddingProvider(process.env.MCP_EMBEDDING_MODEL);
-            const { SearchEngine } = await import('./search-engine.js');
-            const searchEngine = new SearchEngine(manager, embeddingProvider);
-
+            
+            // Ensure vector database is ready
+            await manager.ensureVectorDbReady();
+            
+            const vectorDatabase = (manager as any).vectorDatabase;
+            if (!vectorDatabase) {
+                throw new Error('Vector database is not available. Enable MCP_VECTOR_DB=true to use code block search.');
+            }
+            
             // Check if document exists
             const document = await manager.getDocument(args.document_id);
             if (!document) {
                 throw new Error(`Document with ID '${args.document_id}' not found. Use 'list_documents' to get available document IDs.`);
             }
 
-            const codeBlocks = await searchEngine.getCodeBlocks(args.document_id);
+            const codeBlocks = await vectorDatabase.getCodeBlocksByDocument(args.document_id);
 
             if (codeBlocks.length === 0) {
                 return `No code blocks found for document '${args.document_id}'. This document may not have been crawled with code block extraction enabled, or it may not contain any code blocks.`;

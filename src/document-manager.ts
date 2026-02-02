@@ -4,7 +4,6 @@ import * as path from "path";
 import { glob } from "glob";
 import { createHash } from 'crypto';
 import type { Document, DocumentChunk, DocumentSummary, SearchResult, CodeBlock, EmbeddingProvider, QueryOptions, QueryResponse, DocumentDiscoveryResult, MetadataFilter } from './types.js';
-import { SimpleEmbeddingProvider } from './embedding-provider.js';
 import { IntelligentChunker } from './intelligent-chunker.js';
 import { extractText } from 'unpdf';
 import { getDefaultDataDir, expandHomeDir } from './utils.js';
@@ -95,13 +94,13 @@ export class DocumentManager {
     private useTagGeneration: boolean;
     private useGeneratedTagsInQuery: boolean;
 
-    constructor(embeddingProvider?: EmbeddingProvider, vectorDatabase?: VectorDatabase) {
+    constructor(embeddingProvider: EmbeddingProvider, vectorDatabase?: VectorDatabase) {
         // Always use default paths
         const baseDir = getDefaultDataDir();
         this.dataDir = path.join(baseDir, 'data');
         this.uploadsDir = path.join(baseDir, 'uploads');
 
-        this.embeddingProvider = embeddingProvider || new SimpleEmbeddingProvider();
+        this.embeddingProvider = embeddingProvider;
         this.intelligentChunker = new IntelligentChunker(this.embeddingProvider);
 
         // Feature flags with fallback
@@ -712,71 +711,6 @@ export class DocumentManager {
         }
 
         return { total, documents };
-    }
-
-    async searchDocuments(documentId: string, query: string, limit = 10): Promise<SearchResult[]> {
-        console.error(`[DocumentManager] searchDocuments START - documentId: ${documentId}, query: "${query}"`);
-        
-        const queryEmbedding = await this.embeddingProvider.generateEmbedding(query);
-        console.error(`[DocumentManager] Query embedding generated: ${queryEmbedding.length} dimensions`);
-        
-        // Log query embedding statistics
-        const qEmbedArray = Array.from(queryEmbedding);
-        const qNorm = Math.sqrt(qEmbedArray.reduce((sum, v) => sum + v*v, 0));
-        const qMin = Math.min(...qEmbedArray);
-        const qMax = Math.max(...qEmbedArray);
-        console.error(`[DocumentManager] Query embedding - norm: ${qNorm.toFixed(6)}, min: ${qMin.toFixed(6)}, max: ${qMax.toFixed(6)}`);
-
-        // Get similarity threshold from environment variable
-        // Default to 0.0 to allow all results (similarity range is [0, 1])
-        const similarityThreshold = this.getSimilarityThreshold();
-        console.error(`[DocumentManager] Similarity threshold: ${similarityThreshold}`);
-
-        // Use vector database (LanceDB is now the only supported backend)
-        if (this.useVectorDb && this.vectorDatabase) {
-            try {
-                const filter = `document_id = '${documentId}'`;
-                console.error(`[DocumentManager] Searching with filter: ${filter}`);
-                
-                const results = await this.vectorDatabase.search(
-                    queryEmbedding,
-                    limit,
-                    filter
-                );
-                
-                console.error(`[DocumentManager] Vector search returned ${results.length} results`);
-                if (results.length > 0) {
-                    console.error(`[DocumentManager] Top result: doc_id=${results[0].chunk.document_id}, score=${results[0].score}`);
-                }
-                
-                // Filter by similarity threshold
-                const filteredResults = results.filter(result => result.score >= similarityThreshold);
-                console.error(`[DocumentManager] After threshold filter: ${filteredResults.length} results`);
-                
-                return filteredResults;
-            } catch (error) {
-                console.error('[DocumentManager] Vector database search failed:', error);
-                throw new Error(`Failed to search documents: ${error}`);
-            }
-        }
-
-        throw new Error('Vector database is not enabled. Set MCP_VECTOR_DB=true to enable vector search.');
-    }
-
-    private cosineSimilarity(a: number[], b: number[]): number {
-        if (a.length !== b.length) return 0;
-
-        let dotProduct = 0;
-        let normA = 0;
-        let normB = 0;
-
-        for (let i = 0; i < a.length; i++) {
-            dotProduct += a[i] * b[i];
-            normA += a[i] * a[i];
-            normB += b[i] * b[i];
-        }
-
-        return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
     }
 
     private getSimilarityThreshold(): number {
