@@ -33,8 +33,9 @@ If you prefer not to use `npm link`, you can reference the server directly in yo
       "args": ["/full/path/to/saga/dist/server.js"],
       "env": {
         "MCP_BASE_DIR": "~/.saga",
-        "MCP_EMBEDDING_PROVIDER": "transformers",
-        "MCP_EMBEDDING_MODEL": "Xenova/all-MiniLM-L6-v2"
+        "MCP_EMBEDDING_PROVIDER": "openai",
+        "MCP_EMBEDDING_BASE_URL": "http://127.0.0.1:1234",
+        "MCP_EMBEDDING_MODEL": "text-embedding-multilingual-e5-large-instruct"
       }
     }
   }
@@ -62,8 +63,9 @@ Add to your MCP client configuration (e.g., Claude Desktop):
       "command": "saga",
       "env": {
         "MCP_BASE_DIR": "~/.saga",
-        "MCP_EMBEDDING_PROVIDER": "transformers",
-        "MCP_EMBEDDING_MODEL": "Xenova/all-MiniLM-L6-v2"
+        "MCP_EMBEDDING_PROVIDER": "openai",
+        "MCP_EMBEDDING_BASE_URL": "http://127.0.0.1:1234",
+        "MCP_EMBEDDING_MODEL": "text-embedding-multilingual-e5-large-instruct"
       }
     }
   }
@@ -76,7 +78,7 @@ Add to your MCP client configuration (e.g., Claude Desktop):
 
 1. **Add documents**: Use `add_document` tool or place `.txt`/`.md` files in the uploads folder and call `process_uploads`
 2. **Search**: Use `query` for semantic document discovery
-3. **Analyze**: Use `search_documents` for chunk-level search or `search_documents_with_ai` for LLM-powered analysis (requires LLM configuration)
+3. **Analyze**: Use `search_documents_with_ai` for LLM-powered analysis (requires LLM configuration)
 
 ## Features
 
@@ -102,7 +104,6 @@ Add to your MCP client configuration (e.g., Claude Desktop):
 - `list_uploads_files` - List files in uploads folder
 
 ### Search & Analysis
-- `search_documents` - Semantic search within documents (chunk-level)
 - `search_documents_with_ai` - LLM-powered analysis (requires provider config)
 - `get_context_window` - Get neighboring chunks for context
 - `crawl_documentation` - Crawl public docs from a seed URL
@@ -115,9 +116,9 @@ Configure via environment variables:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `MCP_BASE_DIR` | Data storage directory | `~/.saga` |
-| `MCP_EMBEDDING_PROVIDER` | `transformers` or `openai` | `transformers` |
-| `MCP_EMBEDDING_MODEL` | Embedding model name | `Xenova/all-MiniLM-L6-v2` |
-| `MCP_EMBEDDING_BASE_URL` | OpenAI-compatible base URL | - |
+| `MCP_EMBEDDING_PROVIDER` | `openai` (OpenAI-compatible API only) | `openai` |
+| `MCP_EMBEDDING_MODEL` | Embedding model name | `text-embedding-multilingual-e5-large-instruct` |
+| `MCP_EMBEDDING_BASE_URL` | OpenAI-compatible base URL (required) | - |
 | `MCP_AI_BASE_URL` | LLM provider URL (LM Studio/synthetic.new) | - |
 | `MCP_AI_MODEL` | LLM model name | Provider default |
 | `MCP_AI_API_KEY` | API key for remote providers | - |

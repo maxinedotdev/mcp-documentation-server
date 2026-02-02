@@ -1,4 +1,27 @@
-# Unreleased
+# [1.0.0](https://github.com/maxinedotdev/saga/compare/v0.2.0...v1.0.0) (2026-02-02)
+
+### Breaking Changes
+
+* **Remove legacy components: Transformers.js, SearchEngine, and searchDocuments()**: Removed local transformer-based embedding support and legacy search components
+  - **Removed components**:
+    - `TransformersEmbeddingProvider` class (local embedding provider using @xenova/transformers)
+    - `SimpleEmbeddingProvider` class (fallback hash-based embedding provider)
+    - `SearchEngine` class (thin wrapper around DocumentManager)
+    - `searchDocuments()` method (single-document vector search in DocumentManager)
+    - `@xenova/transformers` dependency
+  - **Migration required**: Users must configure an OpenAI-compatible embedding provider (LM Studio, synthetic.new, or any OpenAI-compatible API)
+  - **Performance improvements**: Expected 100-500MB RAM reduction and 1-5 minute cold start improvement
+  - **Configuration changes**:
+    - `MCP_EMBEDDING_PROVIDER` now only accepts `openai` (removed `transformers` option)
+    - `MCP_EMBEDDING_BASE_URL` is now required (must point to OpenAI-compatible API)
+    - `MCP_EMBEDDING_MODEL` defaults to `text-embedding-multilingual-e5-large-instruct`
+  - **Migration guide**: See `docs/REMOVE-LEGACY-COMPONENTS.md` for detailed migration instructions
+
+* **Update default embedding model for OpenAI-compatible provider**: Changed from `text-embedding-nomic-embed-text-v1.5` to `text-embedding-multilingual-e5-large-instruct`
+  - The new E5 model provides better multilingual support (100+ languages), superior performance on MTEB/BEIR benchmarks, and instruction-tuned capabilities
+  - **Migration required**: Users with existing LM Studio setups must download the new model (`text-embedding-multilingual-e5-large-instruct`)
+  - Users who have explicitly set `MCP_EMBEDDING_MODEL` are unaffected
+  - See migration guide below for LM Studio download instructions
 
 ### Features
 
@@ -18,7 +41,7 @@
 ```bash
 # Multi-provider embedding configuration (JSON format)
 MCP_EMBEDDING_PROVIDERS='[
-  {"provider": "transformers", "priority": 1, "modelName": "Xenova/all-MiniLM-L6-v2"},
+  {"provider": "openai", "priority": 1, "baseUrl": "http://127.0.0.1:1234", "model": "text-embedding-multilingual-e5-large-instruct"},
   {"provider": "openai", "priority": 2, "baseUrl": "https://api.openai.com/v1", "model": "text-embedding-3-small", "apiKey": "sk-..."}
 ]'
 
@@ -30,6 +53,21 @@ MCP_AI_PROVIDERS='[
 ```
 
 ### Breaking Changes
+
+* **Remove legacy components: Transformers.js, SearchEngine, and searchDocuments()**: Removed local transformer-based embedding support and legacy search components
+  - **Removed components**:
+    - `TransformersEmbeddingProvider` class (local embedding provider using @xenova/transformers)
+    - `SimpleEmbeddingProvider` class (fallback hash-based embedding provider)
+    - `SearchEngine` class (thin wrapper around DocumentManager)
+    - `searchDocuments()` method (single-document vector search in DocumentManager)
+    - `@xenova/transformers` dependency
+  - **Migration required**: Users must configure an OpenAI-compatible embedding provider (LM Studio, synthetic.new, or any OpenAI-compatible API)
+  - **Performance improvements**: Expected 100-500MB RAM reduction and 1-5 minute cold start improvement
+  - **Configuration changes**:
+    - `MCP_EMBEDDING_PROVIDER` now only accepts `openai` (removed `transformers` option)
+    - `MCP_EMBEDDING_BASE_URL` is now required (must point to OpenAI-compatible API)
+    - `MCP_EMBEDDING_MODEL` defaults to `text-embedding-multilingual-e5-large-instruct`
+  - **Migration guide**: See `docs/REMOVE-LEGACY-COMPONENTS.md` for detailed migration instructions
 
 * **Update default embedding model for OpenAI-compatible provider**: Changed from `text-embedding-nomic-embed-text-v1.5` to `text-embedding-multilingual-e5-large-instruct`
   - The new E5 model provides better multilingual support (100+ languages), superior performance on MTEB/BEIR benchmarks, and instruction-tuned capabilities
