@@ -25,6 +25,8 @@ import type {
     LanceTable
 } from '../types/database-v1.js';
 
+export type { MigrationOptions } from '../types/database-v1.js';
+
 const logger = getLogger('MigrationV1');
 
 // ============================================================================
