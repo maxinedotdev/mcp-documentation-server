@@ -49,8 +49,8 @@ This will use the default API-based reranker (Cohere) instead.
 - Apple Silicon Mac (M1, M2, or M3 chip)
 
 ### Software
-- Python 3.8 or higher
-- MLX framework: `pip install mlx mlx-lm`
+- UV package manager (https://docs.astral.sh/uv/)
+- MLX framework (managed by UV via pyproject.toml)
 - Jina Reranker V3 MLX model (automatically downloaded or manually)
 
 ## Installation
@@ -70,11 +70,26 @@ No manual steps required!
 
 If you prefer manual setup or need to troubleshoot:
 
-#### 1. Install MLX Dependencies
+#### 1. Install UV Package Manager
 
+UV is required to manage Python dependencies in an isolated environment and avoid polluting the OS Python environment.
+
+**macOS/Linux:**
 ```bash
-pip install mlx mlx-lm
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
+
+**Windows:**
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Verify installation:
+```bash
+uv --version
+```
+
+For more information, visit: https://docs.astral.sh/uv/getting-started/installation/
 
 #### 2. Download Jina Reranker V3 MLX Model
 
@@ -100,8 +115,8 @@ export MCP_RERANKING_PROVIDER=mlx
 # Path to the downloaded MLX model (optional, auto-detected)
 export MCP_RERANKING_MLX_MODEL_PATH=/path/to/jina-reranker-v3-mlx
 
-# Python executable (optional, defaults to 'python3')
-export MCP_RERANKING_MLX_PYTHON_PATH=python3
+# UV executable path (optional, defaults to 'uv')
+export MCP_RERANKING_MLX_UV_PATH=uv
 
 # Reranking parameters (optional)
 export MCP_RERANKING_CANDIDATES=50
@@ -120,13 +135,13 @@ import { MlxReranker } from './reranking/mlx-reranker.js';
 const reranker = new MlxReranker({
     model: 'jina-reranker-v3-mlx',
     modelPath: '/path/to/jina-reranker-v3-mlx',
-    pythonPath: 'python3',
+    uvPath: 'uv',  // UV package manager
     maxCandidates: 50,
     topK: 10,
     timeout: 60000,
 });
 
-// Initialize (checks Python and MLX availability)
+// Initialize (checks UV and MLX availability)
 await reranker.initialize();
 
 // Rerank documents
@@ -163,7 +178,7 @@ if (config.provider === 'mlx') {
     const reranker = new MlxReranker({
         model: config.model,
         modelPath: process.env.MCP_RERANKING_MLX_MODEL_PATH!,
-        pythonPath: process.env.MCP_RERANKING_MLX_PYTHON_PATH || 'python3',
+        uvPath: process.env.MCP_RERANKING_MLX_UV_PATH || 'uv',
         maxCandidates: config.maxCandidates,
         topK: config.topK,
         timeout: config.timeout,
@@ -225,19 +240,44 @@ TypeScript Application
 ## Limitations
 
 1. **Apple Silicon Only**: MLX only runs on Apple Silicon (M1/M2/M3) chips
-2. **Python Dependency**: Requires Python and MLX to be installed
+2. **UV Dependency**: Requires UV package manager to be installed
 3. **Model Download**: Must download the model manually from Hugging Face
 4. **Memory Usage**: Model requires 2-4 GB of RAM
 5. **First Request Slow**: First reranking request is slower due to model loading
 
 ## Troubleshooting
 
+### "UV not found"
+
+UV is required for MLX reranker. Install UV package manager:
+
+**macOS/Linux:**
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+**Windows:**
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Verify installation:
+```bash
+uv --version
+```
+
+If UV is installed but not in your PATH, set the UV path:
+```bash
+export MCP_RERANKING_MLX_UV_PATH=/path/to/uv
+```
+
 ### "MLX dependencies not installed"
 
-Install MLX and MLX-LM:
-```bash
-pip install mlx mlx-lm
-```
+UV will automatically install MLX dependencies in an isolated environment. If you encounter issues:
+
+1. Ensure UV is installed and accessible
+2. Check that the `pyproject.toml` file exists in the `src/reranking` directory
+3. Try running `uv run python -c "import mlx; print(mlx.__version__)"` manually
 
 ### "Failed to load model from path"
 
@@ -246,12 +286,16 @@ Ensure the model path is correct and the model files exist:
 ls -la /path/to/jina-reranker-v3-mlx
 ```
 
-### "Python not found"
+### "UV command failed"
 
-Check Python installation and update the path:
+Check that UV is properly installed:
 ```bash
-which python3
-export MCP_RERANKING_MLX_PYTHON_PATH=/path/to/python3
+uv --version
+```
+
+If UV is installed but not in PATH, specify the full path:
+```bash
+export MCP_RERANKING_MLX_UV_PATH=/full/path/to/uv
 ```
 
 ### "MLX reranker timed out"

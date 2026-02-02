@@ -3,11 +3,12 @@
  * 
  * This reranker uses Apple's MLX framework to run Jina Reranker V3 MLX locally
  * on Apple Silicon (M1/M2/M3) chips. It provides fast, local reranking without
- * API calls by spawning a Python subprocess to run the MLX model.
+ * API calls by spawning a Python subprocess via UV to run the MLX model.
  * 
  * Requirements:
  * - Apple Silicon (M1/M2/M3) Mac
- * - Python 3.8+ with MLX installed: pip install mlx mlx-lm
+ * - UV package manager (https://docs.astral.sh/uv/)
+ * - MLX framework (managed by UV via pyproject.toml)
  * - Jina Reranker V3 MLX model downloaded locally
  */
 
@@ -25,7 +26,9 @@ const __dirname = dirname(__filename);
 interface MlxRerankerConfig extends RerankerConfig {
     /** Path to the MLX model directory */
     modelPath: string;
-    /** Path to Python executable (default: 'python3') */
+    /** Path to UV executable (default: 'uv') */
+    uvPath?: string;
+    /** Path to Python executable (deprecated for backward compatibility) */
     pythonPath?: string;
 }
 
@@ -57,7 +60,8 @@ export class MlxReranker implements Reranker {
             provider: 'mlx', // This is a local provider
             model: config.model || 'jina-reranker-v3-mlx',
             modelPath: config.modelPath || '',
-            pythonPath: config.pythonPath || 'python3',
+            uvPath: config.uvPath || 'uv',
+            pythonPath: config.pythonPath, // Deprecated, kept for backward compatibility
             maxCandidates: config.maxCandidates || 50,
             topK: config.topK || 10,
             timeout: config.timeout || 60000, // Longer timeout for local inference
@@ -69,15 +73,15 @@ export class MlxReranker implements Reranker {
 
     /**
      * Initialize the MLX reranker
-     * Checks if Python and MLX are available
+     * Checks if UV and MLX are available
      */
     async initialize(): Promise<void> {
         try {
-            // Check if Python is available
-            await this.runPythonScript(['--version']);
+            // Check if UV is available
+            await this.runUvCommand(['--version']);
             
-            // Check if MLX is installed
-            await this.runPythonScript(['-c', 'import mlx; print(mlx.__version__)']);
+            // Check if MLX is installed via UV
+            await this.runUvCommand(['run', 'python', '-c', 'import mlx; print(mlx.__version__)']);
             
             // Check if model path exists
             if (!this.config.modelPath) {
@@ -155,7 +159,7 @@ export class MlxReranker implements Reranker {
     }
 
     /**
-     * Run the Python MLX reranker script
+     * Run the Python MLX reranker script using UV
      * @param query - Search query
      * @param documents - Documents to rerank
      * @param topK - Number of top results to return
@@ -168,6 +172,8 @@ export class MlxReranker implements Reranker {
     ): Promise<MlxRerankerResponse> {
         return new Promise((resolve, reject) => {
             const args = [
+                'run',
+                'python',
                 this.pythonScriptPath,
                 '--query', query,
                 '--model', this.config.modelPath,
@@ -175,20 +181,20 @@ export class MlxReranker implements Reranker {
                 '--documents', JSON.stringify(documents),
             ];
 
-            const python = spawn(this.config.pythonPath!, args);
+            const uv = spawn(this.config.uvPath!, args);
 
             let stdout = '';
             let stderr = '';
 
-            python.stdout.on('data', (data) => {
+            uv.stdout.on('data', (data) => {
                 stdout += data.toString();
             });
 
-            python.stderr.on('data', (data) => {
+            uv.stderr.on('data', (data) => {
                 stderr += data.toString();
             });
 
-            python.on('close', (code) => {
+            uv.on('close', (code) => {
                 if (code !== 0) {
                     reject(new Error(`MLX reranker script exited with code ${code}: ${stderr}`));
                     return;
@@ -208,52 +214,52 @@ export class MlxReranker implements Reranker {
                 }
             });
 
-            python.on('error', (error) => {
-                reject(new Error(`Failed to spawn Python process: ${error.message}`));
+            uv.on('error', (error) => {
+                reject(new Error(`Failed to spawn UV process: ${error.message}`));
             });
 
             // Set timeout
             const timeout = setTimeout(() => {
-                python.kill();
+                uv.kill();
                 reject(new Error(`MLX reranker timed out after ${this.config.timeout}ms`));
             }, this.config.timeout);
 
-            python.on('close', () => {
+            uv.on('close', () => {
                 clearTimeout(timeout);
             });
         });
     }
 
     /**
-     * Run a Python command and return the output
-     * @param args - Arguments to pass to Python
+     * Run a UV command and return the output
+     * @param args - Arguments to pass to UV
      * @returns Promise resolving to the command output
      */
-    private runPythonScript(args: string[]): Promise<string> {
+    private runUvCommand(args: string[]): Promise<string> {
         return new Promise((resolve, reject) => {
-            const python = spawn(this.config.pythonPath!, args);
+            const uv = spawn(this.config.uvPath!, args);
 
             let stdout = '';
             let stderr = '';
 
-            python.stdout.on('data', (data) => {
+            uv.stdout.on('data', (data) => {
                 stdout += data.toString();
             });
 
-            python.stderr.on('data', (data) => {
+            uv.stderr.on('data', (data) => {
                 stderr += data.toString();
             });
 
-            python.on('close', (code) => {
+            uv.on('close', (code) => {
                 if (code !== 0) {
-                    reject(new Error(`Python command failed with code ${code}: ${stderr}`));
+                    reject(new Error(`UV command failed with code ${code}: ${stderr}`));
                     return;
                 }
                 resolve(stdout);
             });
 
-            python.on('error', (error) => {
-                reject(new Error(`Failed to spawn Python process: ${error.message}`));
+            uv.on('error', (error) => {
+                reject(new Error(`Failed to spawn UV process: ${error.message}`));
             });
         });
     }

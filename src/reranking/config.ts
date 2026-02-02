@@ -19,7 +19,8 @@ const DEFAULT_CONFIG = {
     timeout: 30000,
     // MLX-specific configuration
     mlxModelPath: '',  // Path to MLX model directory (auto-detected on Apple Silicon)
-    mlxPythonPath: 'python3',  // Path to Python executable
+    mlxUvPath: 'uv',  // Path to UV executable
+    mlxPythonPath: 'python3',  // Path to Python executable (deprecated, for backward compatibility)
     autoConfigureMlx: true,  // Enable auto-configuration of MLX on Apple Silicon
 };
 
@@ -27,7 +28,7 @@ const DEFAULT_CONFIG = {
  * Load reranking configuration from environment variables
  * @returns Reranking configuration
  */
-function loadConfig(): RerankerConfig & { enabled: boolean; mlxModelPath: string; mlxPythonPath: string } {
+function loadConfig(): RerankerConfig & { enabled: boolean; mlxModelPath: string; mlxUvPath: string; mlxPythonPath: string } {
     // Check if auto-configuration is enabled (default: true)
     const autoConfigureMlx = process.env.MCP_RERANKING_AUTO_CONFIGURE_MLX !== 'false';
     
@@ -68,6 +69,7 @@ function loadConfig(): RerankerConfig & { enabled: boolean; mlxModelPath: string
 
         // MLX-specific configuration
         mlxModelPath,
+        mlxUvPath: process.env.MCP_RERANKING_MLX_UV_PATH || DEFAULT_CONFIG.mlxUvPath,
         mlxPythonPath: process.env.MCP_RERANKING_MLX_PYTHON_PATH || DEFAULT_CONFIG.mlxPythonPath,
     };
 }
@@ -76,7 +78,7 @@ function loadConfig(): RerankerConfig & { enabled: boolean; mlxModelPath: string
  * Reranking configuration loaded from environment variables
  * Reloaded on each access for testing support
  */
-export const RERANKING_CONFIG: RerankerConfig & { enabled: boolean; mlxModelPath: string; mlxPythonPath: string } = loadConfig();
+export const RERANKING_CONFIG: RerankerConfig & { enabled: boolean; mlxModelPath: string; mlxUvPath: string; mlxPythonPath: string } = loadConfig();
 
 /**
  * Validate reranking configuration

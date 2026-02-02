@@ -16,7 +16,7 @@ describe('MlxReranker', () => {
         reranker = new MlxReranker({
             model: 'jina-reranker-v3-mlx',
             modelPath: '/path/to/mlx/model',
-            pythonPath: 'python3',
+            uvPath: 'uv',
             maxCandidates: 50,
             topK: 10,
             timeout: 60000,
@@ -42,7 +42,7 @@ describe('MlxReranker', () => {
             const customReranker = new MlxReranker({
                 model: 'custom-mlx-model',
                 modelPath: '/custom/path',
-                pythonPath: 'python3.11',
+                uvPath: '/usr/local/bin/uv',
                 maxCandidates: 100,
                 topK: 20,
                 timeout: 120000,
@@ -65,8 +65,8 @@ describe('MlxReranker', () => {
     });
 
     describe('initialize', () => {
-        it('should initialize successfully when Python and MLX are available', async () => {
-            // Mock successful Python version check
+        it('should initialize successfully when UV and MLX are available', async () => {
+            // Mock successful UV version check
             mockSpawn.mockReturnValueOnce({
                 stdout: { on: vi.fn() },
                 stderr: { on: vi.fn() },
@@ -90,12 +90,12 @@ describe('MlxReranker', () => {
             expect(reranker.isReady()).toBe(true);
         });
 
-        it('should fail when Python is not available', async () => {
+        it('should fail when UV is not available', async () => {
             mockSpawn.mockReturnValueOnce({
                 stdout: { on: vi.fn() },
                 stderr: { on: vi.fn() },
                 on: vi.fn((event: string, callback: Function) => {
-                    if (event === 'error') callback(new Error('Python not found'));
+                    if (event === 'error') callback(new Error('UV not found'));
                 }),
             });
 
@@ -104,7 +104,7 @@ describe('MlxReranker', () => {
         });
 
         it('should fail when MLX is not installed', async () => {
-            // Mock successful Python version check
+            // Mock successful UV version check
             mockSpawn.mockReturnValueOnce({
                 stdout: { on: vi.fn() },
                 stderr: { on: vi.fn() },
@@ -252,11 +252,11 @@ describe('MlxReranker', () => {
                 stdout: { on: vi.fn() },
                 stderr: { on: vi.fn() },
                 on: vi.fn((event: string, callback: Function) => {
-                    if (event === 'error') callback(new Error('Failed to spawn Python'));
+                    if (event === 'error') callback(new Error('Failed to spawn UV'));
                 }),
             }));
 
-            await expect(reranker.rerank('test query', ['doc1'])).rejects.toThrow('Failed to spawn Python');
+            await expect(reranker.rerank('test query', ['doc1'])).rejects.toThrow('Failed to spawn UV');
         });
 
         it('should throw when not ready', async () => {
@@ -298,7 +298,7 @@ describe('Configuration with MLX', () => {
             process.env.MCP_RERANKING_PROVIDER = 'mlx';
             process.env.MCP_RERANKING_MODEL = 'jina-reranker-v3-mlx';
             process.env.MCP_RERANKING_MLX_MODEL_PATH = '/path/to/model';
-            process.env.MCP_RERANKING_MLX_PYTHON_PATH = 'python3.11';
+            process.env.MCP_RERANKING_MLX_UV_PATH = '/usr/local/bin/uv';
             process.env.MCP_RERANKING_CANDIDATES = '50';
             process.env.MCP_RERANKING_TOP_K = '10';
             process.env.MCP_RERANKING_TIMEOUT = '60000';
@@ -316,7 +316,7 @@ describe('Configuration with MLX', () => {
             delete process.env.MCP_RERANKING_PROVIDER;
             delete process.env.MCP_RERANKING_MODEL;
             delete process.env.MCP_RERANKING_MLX_MODEL_PATH;
-            delete process.env.MCP_RERANKING_MLX_PYTHON_PATH;
+            delete process.env.MCP_RERANKING_MLX_UV_PATH;
             delete process.env.MCP_RERANKING_CANDIDATES;
             delete process.env.MCP_RERANKING_TOP_K;
             delete process.env.MCP_RERANKING_TIMEOUT;
