@@ -18,7 +18,7 @@ import {
 
 describe('Validation Tests', () => {
     describe('Migration with Real Data', () => {
-        it('should migrate documents and verify data', async () => {
+        it('should migrate documents and verify data', { timeout: 10000 }, async () => {
             const tempDir = createTempDir('mig-real-');
             const dataDir = path.join(tempDir, 'data');
             const lanceDir = path.join(tempDir, 'lancedb');

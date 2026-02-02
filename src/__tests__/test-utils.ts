@@ -14,7 +14,23 @@ export const createTempDir = (prefix: string): string => {
 };
 
 export const removeTempDir = (dir: string): void => {
-    fs.rmSync(dir, { recursive: true, force: true });
+    try {
+        fs.rmSync(dir, { recursive: true, force: true });
+    } catch (error) {
+        // If directory is not empty (ENOTEMPTY) or busy, log but don't throw
+        // This can happen when LanceDB files are still being released
+        // Temp directories will be cleaned up by the OS eventually
+        if (error instanceof Error && 'code' in error) {
+            const errorCode = error.code;
+            if (errorCode === 'ENOTEMPTY' || errorCode === 'EBUSY' || errorCode === 'EPERM') {
+                console.warn(`[test-utils] Could not remove temp directory (will be cleaned by OS): ${dir} (${errorCode})`);
+            } else {
+                console.warn(`[test-utils] Failed to remove temp directory: ${dir}`, error);
+            }
+        } else {
+            console.warn(`[test-utils] Failed to remove temp directory: ${dir}`, error);
+        }
+    }
 };
 
 export const withTempDir = async <T>(prefix: string, fn: (dir: string) => Promise<T> | T): Promise<T> => {
