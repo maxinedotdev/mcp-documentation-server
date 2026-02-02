@@ -129,6 +129,17 @@ export class LanceDBAdapter implements VectorDatabase {
         console.error(`[LanceDB] ${getTimestamp()} acquireLock - Lock file: ${lockFile}`);
         console.error(`[LanceDB] ${getTimestamp()} Memory: ${getMemoryUsage()}`);
         
+        // Ensure the database directory exists before trying to create the lock file
+        if (!fs.existsSync(this.dbPath)) {
+            console.error(`[LanceDB] ${getTimestamp()} acquireLock - Creating DB directory: ${this.dbPath}`);
+            try {
+                fs.mkdirSync(this.dbPath, { recursive: true });
+                console.error(`[LanceDB] ${getTimestamp()} acquireLock - DB directory created successfully`);
+            } catch (mkdirErr) {
+                console.error(`[LanceDB] ${getTimestamp()} acquireLock - Failed to create DB directory: ${mkdirErr}`);
+            }
+        }
+        
         while (Date.now() - startTime < timeoutMs) {
             try {
                 // Try to create lock file exclusively
@@ -145,6 +156,10 @@ export class LanceDBAdapter implements VectorDatabase {
                 
                 return true;
             } catch (err) {
+                const error = err as Error;
+                console.error(`[LanceDB] ${getTimestamp()} acquireLock - Lock file creation failed: ${error.message}`);
+                console.error(`[LanceDB] ${getTimestamp()} acquireLock - Error code: ${(error as any).code}`);
+                
                 // Lock exists, check if stale
                 try {
                     const lockData = JSON.parse(fs.readFileSync(lockFile, "utf8"));
@@ -161,8 +176,10 @@ export class LanceDBAdapter implements VectorDatabase {
                     logger.debug(`[PID:${pid}] Waiting for lock held by PID:${lockData.pid}`);
                     console.error(`[LanceDB] ${getTimestamp()} acquireLock - Waiting for lock held by PID:${lockData.pid} (age: ${lockAge}ms, retry: ${retries})`);
                 } catch (readErr) {
+                    const readError = readErr as Error;
                     // Lock file may have been released
-                    console.error(`[LanceDB] ${getTimestamp()} acquireLock - Lock file read error (may have been released): ${readErr}`);
+                    console.error(`[LanceDB] ${getTimestamp()} acquireLock - Lock file read error (may have been released): ${readError.message}`);
+                    console.error(`[LanceDB] ${getTimestamp()} acquireLock - Read error code: ${(readError as any).code}`);
                 }
                 
                 retries++;
