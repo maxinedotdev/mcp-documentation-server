@@ -407,7 +407,7 @@ MCP_AI_API_KEY=your-api-key
 
 **Solutions**:
 1. **Clear LanceDB data**: `rm -rf ~/.saga/lancedb/`
-2. **Verify embedding endpoint**: 
+2. **Verify embedding endpoint**:
    ```bash
    curl http://127.0.0.1:1234/v1/embeddings \
      -H "Content-Type: application/json" \
@@ -415,6 +415,51 @@ MCP_AI_API_KEY=your-api-key
    ```
 3. **Check VS Code MCP logs**: Open Output panel → Select "MCP Documentation Server"
 4. **Restart VS Code** after applying fixes
+
+### LM Studio "Unexpected endpoint or method" Errors
+
+**Symptom**: LM Studio logs show repeated errors like:
+```
+Unexpected endpoint or method. (HEAD /). Returning 200 anyway
+```
+
+**Cause**: LM Studio is configured to use HTTP transport for the Saga MCP server, but Saga uses stdio transport by default. LM Studio attempts to ping an HTTP endpoint that doesn't exist.
+
+**Solutions**:
+1. **Configure LM Studio to use stdio transport**: Ensure your LM Studio MCP configuration uses `command` and `args` instead of HTTP URL
+2. **Example correct configuration**:
+   ```json
+   {
+     "mcpServers": {
+       "saga": {
+         "command": "node",
+         "args": ["/path/to/saga/dist/server.js"],
+         "env": {
+           "MCP_BASE_DIR": "~/.saga",
+           "MCP_EMBEDDING_PROVIDER": "openai",
+           "MCP_EMBEDDING_BASE_URL": "http://127.0.0.1:1234",
+           "MCP_EMBEDDING_MODEL": "text-embedding-multilingual-e5-large-instruct"
+         }
+       }
+     }
+   }
+   ```
+3. **Note**: These errors are harmless and don't affect server functionality, but fixing the configuration will clean up the logs
+
+### Vector Index Creation Errors
+
+**Symptom**: Logs show warnings about vector index creation:
+```
+Failed to create vector index on chunks: Not enough rows to train PQ. Requires 256 rows but only 33 available
+```
+
+**Cause**: LanceDB's IVF_PQ indexing requires at least 256 vectors for Product Quantization training. Small datasets don't have enough data.
+
+**Solutions**:
+1. **No action needed**: The server gracefully handles this by skipping index creation for small datasets
+2. **Use HNSW indexing**: Set `MCP_USE_HNSW=true` (default) - HNSW works with any dataset size
+3. **Add more documents**: When your dataset grows beyond 256 vectors, indexes will be created automatically
+4. **Note**: Brute force search is efficient for small datasets (< 1000 vectors), so missing indexes won't impact performance
 
 ### Graceful Degradation
 

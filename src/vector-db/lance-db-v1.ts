@@ -493,13 +493,16 @@ export class LanceDBV1 implements ValidationDatabase {
                 const count = await tableRef.countRows();
 
                 if (count > 0) {
+                    // Minimum rows required for IVF_PQ (PQ training requires 256 rows)
+                    const MIN_VECTORS_FOR_IVF_PQ = 256;
+
                     // Use HNSW if enabled, otherwise fall back to IVF_PQ
                     const useHNSW = this.hnswConfig.useHNSW;
                     const config = getVectorIndexConfig(count, this.embeddingDim, useHNSW);
 
                     try {
                         if (config.type === 'hnsw') {
-                            // Create HNSW index
+                            // Create HNSW index (works with any number of vectors)
                             await tableRef.createIndex('embedding', {
                                 type: 'hnsw',
                                 metricType: config.metricType,
@@ -508,6 +511,16 @@ export class LanceDBV1 implements ValidationDatabase {
                             });
                             logger.info(`Created HNSW index on ${tableName}: M=${config.M}, efConstruction=${config.efConstruction}`);
                         } else {
+                            // Check if we have enough vectors for IVF_PQ
+                            if (count < MIN_VECTORS_FOR_IVF_PQ) {
+                                logger.warn(
+                                    `Skipping vector index creation on ${tableName}: only ${count} vectors available, ` +
+                                    `but IVF_PQ requires at least ${MIN_VECTORS_FOR_IVF_PQ} vectors for PQ training. ` +
+                                    `Brute force search will be used instead, which is efficient for small datasets.`
+                                );
+                                continue;
+                            }
+
                             // Create IVF_PQ index
                             await tableRef.createIndex('embedding', {
                                 type: config.type,
