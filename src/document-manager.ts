@@ -1062,11 +1062,22 @@ export class DocumentManager {
         let processed = 0;
 
         try {
-            // Custom recursive function to find files following symlinks
-            const { readdir, stat } = await import('fs/promises');
+            // Custom recursive function to find files following symlinks with cycle detection
+            const { readdir, stat, realpath } = await import('fs/promises');
             const files: string[] = [];
+            const visitedDirs = new Set<string>(); // Track visited directories by real path to prevent cycles
             
             async function findFilesRecursive(dir: string) {
+                // Resolve the real path to detect symlinks and prevent cycles
+                const realPath = await realpath(dir).catch(() => dir);
+                
+                // Check if we've already visited this directory (cycle detection)
+                if (visitedDirs.has(realPath)) {
+                    console.error(`[DocumentManager] Skipping already visited directory (cycle detected): ${realPath}`);
+                    return;
+                }
+                visitedDirs.add(realPath);
+                
                 const entries = await readdir(dir, { withFileTypes: true });
                 for (const entry of entries) {
                     const fullPath = path.join(dir, entry.name);
@@ -1170,11 +1181,22 @@ export class DocumentManager {
         const files: { name: string; size: number; modified: string; supported: boolean }[] = [];
 
         try {
-            // Custom recursive function to find files following symlinks
-            const { readdir, stat } = await import('fs/promises');
+            // Custom recursive function to find files following symlinks with cycle detection
+            const { readdir, stat, realpath } = await import('fs/promises');
             const filePaths: string[] = [];
+            const visitedDirs = new Set<string>(); // Track visited directories by real path to prevent cycles
             
             async function findFilesRecursive(dir: string) {
+                // Resolve the real path to detect symlinks and prevent cycles
+                const realPath = await realpath(dir).catch(() => dir);
+                
+                // Check if we've already visited this directory (cycle detection)
+                if (visitedDirs.has(realPath)) {
+                    console.error(`[DocumentManager] Skipping already visited directory (cycle detected): ${realPath}`);
+                    return;
+                }
+                visitedDirs.add(realPath);
+                
                 const entries = await readdir(dir, { withFileTypes: true });
                 for (const entry of entries) {
                     const fullPath = path.join(dir, entry.name);
