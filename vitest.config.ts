@@ -7,6 +7,17 @@ export default defineConfig({
     environment: 'node',
     include: ['**/*.test.ts'],
     setupFiles: ['./src/__tests__/vitest-setup.ts'],
+    // Suppress console output during tests to reduce verbosity
+    // This prevents large amounts of debug logging from cluttering test results
+    reporters: process.env.CI ? ['junit', 'verbose'] : ['default'],
+    outputFile: process.env.CI ? './test-results/junit.xml' : undefined,
+    // Suppress console.log and console.info during tests
+    // Set MCP_VERBOSE_TESTS=true to enable verbose output if needed for debugging
+    onConsoleLog: (log, type) => {
+      // Suppress all console output unless verbose tests are enabled
+      // This includes logs from DocumentManager, VectorDB, LanceDB, etc.
+      return !!process.env.MCP_VERBOSE_TESTS;
+    },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
@@ -24,8 +35,6 @@ export default defineConfig({
         statements: 80,
       },
     },
-    reporters: process.env.CI ? ['junit', 'verbose'] : ['default'],
-    outputFile: process.env.CI ? './test-results/junit.xml' : undefined,
   },
   plugins: [tsconfigPaths()],
 });

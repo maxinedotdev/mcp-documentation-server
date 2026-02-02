@@ -244,6 +244,14 @@ npm run test:coverage    # Run tests with coverage report
 - JUnit XML reports are generated for CI environments
 - Reports are saved to `test-results/junit.xml` when running in CI
 
+**Test Output Control:**
+- By default, console output from tests is suppressed to keep results clean and readable
+- To enable verbose output for debugging, set the `MCP_VERBOSE_TESTS` environment variable:
+  ```bash
+  MCP_VERBOSE_TESTS=true npm run test:all
+  ```
+- This is useful when debugging test failures or investigating specific test behavior
+
 ## Contributing
 
 1. Fork the repository

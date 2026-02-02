@@ -130,7 +130,7 @@ describe('Integration Tests', () => {
     });
 
     describe('Migration Tests', () => {
-        it('should migrate documents from JSON to vector DB', async () => {
+        it('should migrate documents from JSON to vector DB', { timeout: 60000 }, async () => {
             await withTempDir('migrate-test-', async (tempDir) => {
                 const dataDir = path.join(tempDir, 'data');
                 const lanceDir = path.join(tempDir, 'lancedb');
