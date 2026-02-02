@@ -5,7 +5,12 @@
 
 import { describe, it, expect } from 'vitest';
 import { QueryResponse, DocumentDiscoveryResult } from '../types.js';
-import { addDocumentsRange, seedDocuments, withBaseDirAndDocumentManager } from './test-utils.js';
+import { addDocumentsRange, seedDocuments, withBaseDirAndDocumentManager, withEnv } from './test-utils.js';
+import {
+    RequestTimeoutError,
+    ENV_TIMEOUT_AI_SEARCH,
+    ENV_TIMEOUT_GLOBAL,
+} from '../utils/http-timeout.js';
 
 const withQueryManager = async <T>(
     prefix: string,
@@ -386,12 +391,6 @@ describe('Query Integration Tests', () => {
 });
 
 describe('AI Search Timeout Integration Tests', () => {
-    import {
-        RequestTimeoutError,
-        ENV_TIMEOUT_AI_SEARCH,
-        ENV_TIMEOUT_GLOBAL,
-    } from '../utils/http-timeout.js';
-
     describe('AI Search Timeout Configuration', () => {
         it('should configure AI search timeout', async () => {
             await withEnv({

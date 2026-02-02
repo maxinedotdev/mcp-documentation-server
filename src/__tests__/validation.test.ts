@@ -10,6 +10,11 @@ import { DocumentManager } from '../document-manager.js';
 import { createVectorDatabase, LanceDBAdapter } from '../vector-db/index.js';
 import { SimpleEmbeddingProvider } from '../embedding-provider.js';
 import { createTempDir, withBaseDir, withBaseDirAndDocumentManager, withBaseDirAndSearchEngine, withEnv } from './test-utils.js';
+import {
+    RequestTimeoutError,
+    ENV_TIMEOUT_EMBEDDING,
+    ENV_TIMEOUT_GLOBAL,
+} from '../utils/http-timeout.js';
 
 describe('Validation Tests', () => {
     describe('Migration with Real Data', () => {
@@ -298,12 +303,6 @@ describe('Validation Tests', () => {
 });
 
 describe('Embedding Timeout Integration Tests', () => {
-    import {
-        RequestTimeoutError,
-        ENV_TIMEOUT_EMBEDDING,
-        ENV_TIMEOUT_GLOBAL,
-    } from '../utils/http-timeout.js';
-
     describe('Embedding Timeout Configuration', () => {
         it('should create provider with timeout config', async () => {
             await withEnv({
