@@ -1062,12 +1062,19 @@ export class DocumentManager {
         let processed = 0;
 
         try {
-            // Custom recursive function to find files following symlinks with cycle detection
+            // Custom recursive function to find files following symlinks with cycle detection and depth limit
             const { readdir, stat, realpath } = await import('fs/promises');
             const files: string[] = [];
             const visitedDirs = new Set<string>(); // Track visited directories by real path to prevent cycles
+            const MAX_DEPTH = 10; // Prevent infinite recursion with depth limit
             
-            async function findFilesRecursive(dir: string) {
+            async function findFilesRecursive(dir: string, depth: number = 0) {
+                // Check depth limit to prevent infinite recursion
+                if (depth > MAX_DEPTH) {
+                    console.error(`[DocumentManager] Reached maximum depth (${MAX_DEPTH}), skipping: ${dir}`);
+                    return;
+                }
+                
                 // Resolve the real path to detect symlinks and prevent cycles
                 const realPath = await realpath(dir).catch(() => dir);
                 
@@ -1083,14 +1090,16 @@ export class DocumentManager {
                     const fullPath = path.join(dir, entry.name);
                     if (entry.isSymbolicLink()) {
                         // Follow symlink and recurse
-                        const stats = await stat(fullPath);
-                        if (stats.isDirectory()) {
-                            await findFilesRecursive(fullPath);
-                        } else if (stats.isFile()) {
-                            files.push(fullPath);
+                        const stats = await stat(fullPath).catch(() => null);
+                        if (stats) {
+                            if (stats.isDirectory()) {
+                                await findFilesRecursive(fullPath, depth + 1);
+                            } else if (stats.isFile()) {
+                                files.push(fullPath);
+                            }
                         }
                     } else if (entry.isDirectory()) {
-                        await findFilesRecursive(fullPath);
+                        await findFilesRecursive(fullPath, depth + 1);
                     } else if (entry.isFile()) {
                         files.push(fullPath);
                     }
@@ -1181,12 +1190,19 @@ export class DocumentManager {
         const files: { name: string; size: number; modified: string; supported: boolean }[] = [];
 
         try {
-            // Custom recursive function to find files following symlinks with cycle detection
+            // Custom recursive function to find files following symlinks with cycle detection and depth limit
             const { readdir, stat, realpath } = await import('fs/promises');
             const filePaths: string[] = [];
             const visitedDirs = new Set<string>(); // Track visited directories by real path to prevent cycles
+            const MAX_DEPTH = 10; // Prevent infinite recursion with depth limit
             
-            async function findFilesRecursive(dir: string) {
+            async function findFilesRecursive(dir: string, depth: number = 0) {
+                // Check depth limit to prevent infinite recursion
+                if (depth > MAX_DEPTH) {
+                    console.error(`[DocumentManager] Reached maximum depth (${MAX_DEPTH}), skipping: ${dir}`);
+                    return;
+                }
+                
                 // Resolve the real path to detect symlinks and prevent cycles
                 const realPath = await realpath(dir).catch(() => dir);
                 
@@ -1202,14 +1218,16 @@ export class DocumentManager {
                     const fullPath = path.join(dir, entry.name);
                     if (entry.isSymbolicLink()) {
                         // Follow symlink and recurse
-                        const stats = await stat(fullPath);
-                        if (stats.isDirectory()) {
-                            await findFilesRecursive(fullPath);
-                        } else if (stats.isFile()) {
-                            filePaths.push(fullPath);
+                        const stats = await stat(fullPath).catch(() => null);
+                        if (stats) {
+                            if (stats.isDirectory()) {
+                                await findFilesRecursive(fullPath, depth + 1);
+                            } else if (stats.isFile()) {
+                                filePaths.push(fullPath);
+                            }
                         }
                     } else if (entry.isDirectory()) {
-                        await findFilesRecursive(fullPath);
+                        await findFilesRecursive(fullPath, depth + 1);
                     } else if (entry.isFile()) {
                         filePaths.push(fullPath);
                     }
