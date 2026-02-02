@@ -384,7 +384,7 @@ export class DocumentManager {
 
             // Detect language and check allowlist
             const confidenceThreshold = getLanguageConfidenceThreshold();
-            const detectedLanguages = detectLanguages(content, confidenceThreshold);
+            const detectedLanguages = await detectLanguages(content, confidenceThreshold);
             const acceptedLanguages = getAcceptedLanguages();
             
             // Check if language is allowed (skip ingestion if not)

@@ -10,7 +10,7 @@ import type { RerankerConfig, RerankerProviderType } from '../types.js';
 const DEFAULT_CONFIG = {
     enabled: true,  // Opt-out by default (enabled by default)
     provider: 'cohere' as RerankerProviderType,
-    baseUrl: 'http://localhost:1234/v1',  // Default to LM Studio
+    baseUrl: 'https://api.cohere.ai/v1',  // Default to Cohere
     apiKey: '',
     model: 'rerank-multilingual-v3.0',
     maxCandidates: 50,

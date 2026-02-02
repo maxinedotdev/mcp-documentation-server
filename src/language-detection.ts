@@ -5,6 +5,16 @@
 
 import eld from 'eld';
 
+// Initialize eld with the default dataset
+let eldInitialized = false;
+const eldInitPromise = eld.load().then(() => {
+    eldInitialized = true;
+    console.log('[LanguageDetection] ELD dataset loaded successfully');
+}).catch((error) => {
+    console.error('[LanguageDetection] Failed to load ELD dataset:', error);
+    throw error;
+});
+
 // ISO 639-1 code normalization map for common language codes
 // eld returns ISO 639-1 codes directly, but we handle edge cases
 const ISO_639_1_NORMALIZATION: Record<string, string> = {
@@ -47,12 +57,17 @@ const ISO_639_1_NORMALIZATION: Record<string, string> = {
  * @param confidenceThreshold Minimum confidence score (0-1) for a language to be included
  * @returns Array of ISO 639-1 language codes, or ['unknown'] if detection fails
  */
-export function detectLanguages(text: string, confidenceThreshold = 0.2): string[] {
+export async function detectLanguages(text: string, confidenceThreshold = 0.2): Promise<string[]> {
     if (!text || text.trim().length === 0) {
         return ['unknown'];
     }
 
     try {
+        // Wait for eld to be initialized
+        if (!eldInitialized) {
+            await eldInitPromise;
+        }
+
         // eld.detect returns { language: string, score: number }
         const result = eld.detect(text);
 

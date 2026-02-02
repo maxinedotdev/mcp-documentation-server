@@ -8,31 +8,31 @@ import { detectLanguages, getAcceptedLanguages, getDefaultQueryLanguages, getLan
 
 describe('Language Detection', () => {
     describe('Language Detection', () => {
-        it('should detect English', () => {
+        it('should detect English', async () => {
             const englishText = 'This is a test document written in English language.';
-            const englishResult = detectLanguages(englishText, 0.2);
+            const englishResult = await detectLanguages(englishText, 0.2);
             expect(englishResult).toContain('en');
         });
 
-        it('should detect Spanish', () => {
+        it('should detect Spanish', async () => {
             const spanishText = 'Este es un documento de prueba escrito en idioma español.';
-            const spanishResult = detectLanguages(spanishText, 0.2);
+            const spanishResult = await detectLanguages(spanishText, 0.2);
             expect(spanishResult).toContain('es');
         });
 
-        it('should detect French', () => {
+        it('should detect French', async () => {
             const frenchText = 'Ceci est un document de test écrit en langue française.';
-            const frenchResult = detectLanguages(frenchText, 0.2);
+            const frenchResult = await detectLanguages(frenchText, 0.2);
             expect(frenchResult).toContain('fr');
         });
 
-        it('should return unknown for empty text', () => {
-            const emptyResult = detectLanguages('', 0.2);
+        it('should return unknown for empty text', async () => {
+            const emptyResult = await detectLanguages('', 0.2);
             expect(emptyResult).toContain('unknown');
         });
 
-        it('should respect confidence threshold', () => {
-            const lowConfidenceResult = detectLanguages('Hi', 0.9);
+        it('should respect confidence threshold', async () => {
+            const lowConfidenceResult = await detectLanguages('Hi', 0.9);
             expect(lowConfidenceResult).toContain('unknown');
         });
     });
