@@ -230,27 +230,47 @@ export class DocumentManager {
             return false;
         }
 
-        // If there's an ongoing initialization, wait for it (with timeout)
+        // If there's an ongoing initialization, wait for it (with retry logic)
         if (this.vectorDbInitPromise) {
             console.error(`[DocumentManager] ${getTimestamp()} ensureVectorDbReady - Waiting for initialization promise...`);
-            try {
-                const timeoutPromise = new Promise<never>((_, reject) => {
-                    setTimeout(() => {
-                        reject(new Error('Vector DB initialization timeout (30s)'));
-                    }, 30000); // 30 second timeout
-                });
+            
+            const maxRetries = 3;
+            const baseTimeoutMs = 30000; // 30 seconds base timeout
+            
+            for (let attempt = 0; attempt < maxRetries; attempt++) {
+                try {
+                    const timeoutMs = baseTimeoutMs * Math.pow(2, attempt); // Exponential backoff: 30s, 60s, 120s
+                    console.error(`[DocumentManager] ${getTimestamp()} ensureVectorDbReady - Attempt ${attempt + 1}/${maxRetries} with ${timeoutMs}ms timeout`);
+                    
+                    const timeoutPromise = new Promise<never>((_, reject) => {
+                        setTimeout(() => {
+                            reject(new Error(`Vector DB initialization timeout (${timeoutMs}ms)`));
+                        }, timeoutMs);
+                    });
 
-                await Promise.race([this.vectorDbInitPromise, timeoutPromise]);
-                console.error(`[DocumentManager] ${getTimestamp()} ensureVectorDbReady - Initialization promise resolved`);
-            } catch (error) {
-                console.error('[DocumentManager] Vector DB initialization failed or timed out:', error);
-                console.error(`[DocumentManager] ${getTimestamp()} ensureVectorDbReady - Disabling vector DB due to initialization failure`);
-                // Disable vector DB if initialization fails
-                this.useVectorDb = false;
-                this.vectorDatabase = null;
-                this.vectorDbInitPromise = null;
-                endOperation(opId, 'error', error instanceof Error ? error : new Error(String(error)));
-                return false;
+                    await Promise.race([this.vectorDbInitPromise, timeoutPromise]);
+                    console.error(`[DocumentManager] ${getTimestamp()} ensureVectorDbReady - Initialization promise resolved`);
+                    break; // Success, exit retry loop
+                } catch (error) {
+                    console.error(`[DocumentManager] ${getTimestamp()} ensureVectorDbReady - Attempt ${attempt + 1}/${maxRetries} failed:`, error);
+                    
+                    if (attempt === maxRetries - 1) {
+                        // All retries exhausted
+                        console.error('[DocumentManager] Vector DB initialization failed after all retries:', error);
+                        console.error(`[DocumentManager] ${getTimestamp()} ensureVectorDbReady - Disabling vector DB due to initialization failure`);
+                        // Disable vector DB if initialization fails after all retries
+                        this.useVectorDb = false;
+                        this.vectorDatabase = null;
+                        this.vectorDbInitPromise = null;
+                        endOperation(opId, 'error', error instanceof Error ? error : new Error(String(error)));
+                        return false;
+                    }
+                    
+                    // Wait before retry (exponential backoff)
+                    const delayMs = Math.min(5000, 1000 * Math.pow(2, attempt));
+                    console.error(`[DocumentManager] ${getTimestamp()} ensureVectorDbReady - Waiting ${delayMs}ms before retry...`);
+                    await new Promise(resolve => setTimeout(resolve, delayMs));
+                }
             }
         }
 
@@ -341,199 +361,221 @@ export class DocumentManager {
     }
 
     async addDocument(title: string, content: string, metadata: Record<string, any> = {}): Promise<Document | null> {
-        const id = this.generateId(content);
-        const now = new Date().toISOString();
+        try {
+            const id = this.generateId(content);
+            const now = new Date().toISOString();
 
-        // Detect language and check allowlist
-        const confidenceThreshold = getLanguageConfidenceThreshold();
-        const detectedLanguages = detectLanguages(content, confidenceThreshold);
-        const acceptedLanguages = getAcceptedLanguages();
-        
-        // Check if language is allowed (skip ingestion if not)
-        if (!isLanguageAllowed(detectedLanguages, acceptedLanguages)) {
-            console.warn(`[DocumentManager] Document rejected: language '${detectedLanguages.join(', ')}' not in accepted languages list`);
-            return null;
-        }
+            // Detect language and check allowlist
+            const confidenceThreshold = getLanguageConfidenceThreshold();
+            const detectedLanguages = detectLanguages(content, confidenceThreshold);
+            const acceptedLanguages = getAcceptedLanguages();
+            
+            // Check if language is allowed (skip ingestion if not)
+            if (!isLanguageAllowed(detectedLanguages, acceptedLanguages)) {
+                console.warn(`[DocumentManager] Document rejected: language '${detectedLanguages.join(', ')}' not in accepted languages list`);
+                return null;
+            }
 
-        const existingDocument = await this.getDocument(id);
-        if (existingDocument) {
-            if (metadata && Object.keys(metadata).length > 0) {
-                existingDocument.metadata = {
-                    ...existingDocument.metadata,
-                    ...metadata,
-                };
-                // Update languages if not already present
-                if (!existingDocument.metadata.languages) {
-                    existingDocument.metadata.languages = detectedLanguages;
+            const existingDocument = await this.getDocument(id);
+            if (existingDocument) {
+                if (metadata && Object.keys(metadata).length > 0) {
+                    existingDocument.metadata = {
+                        ...existingDocument.metadata,
+                        ...metadata,
+                    };
+                    // Update languages if not already present
+                    if (!existingDocument.metadata.languages) {
+                        existingDocument.metadata.languages = detectedLanguages;
+                    }
+                    existingDocument.updated_at = now;
+                    const filePath = this.getDocumentPath(id);
+                    await writeFile(filePath, JSON.stringify(existingDocument, null, 2));
+
+                    if (this.useIndexing && this.documentIndex) {
+                        await this.ensureIndexInitialized();
+                        this.documentIndex.addDocument(
+                            existingDocument.id,
+                            filePath,
+                            existingDocument.content,
+                            existingDocument.chunks,
+                            existingDocument.title,
+                            existingDocument.metadata
+                        );
+                    }
                 }
-                existingDocument.updated_at = now;
-                const filePath = this.getDocumentPath(id);
-                await writeFile(filePath, JSON.stringify(existingDocument, null, 2));
 
-                if (this.useIndexing && this.documentIndex) {
-                    await this.ensureIndexInitialized();
-                    this.documentIndex.addDocument(
-                        existingDocument.id,
-                        filePath,
-                        existingDocument.content,
-                        existingDocument.chunks,
-                        existingDocument.title,
-                        existingDocument.metadata
-                    );
+                return existingDocument;
+            }
+
+            // Check for duplicate content if indexing is enabled
+            if (this.useIndexing && this.documentIndex) {
+                await this.ensureIndexInitialized();
+                const duplicateId = this.documentIndex.findDuplicateContent(content);
+                if (duplicateId) {
+                    console.warn(`[DocumentManager] Duplicate content detected, existing document: ${duplicateId}`);
+                    // Optionally, you might want to return the existing document or throw an error
+                    // For now, we'll continue with creating a new document
                 }
             }
 
-            return existingDocument;
-        }
+            // Create chunks using intelligent chunker with environment variable overrides
+            // Use -1 to use intelligent chunker's content-type-specific defaults
+            const envChunkSize = parseInt(process.env.MCP_CHUNK_SIZE || '-1');
+            const envChunkOverlap = parseInt(process.env.MCP_CHUNK_OVERLAP || '-1');
+            
+            const chunkOptions: any = {
+                adaptiveSize: true,
+                addContext: true
+            };
 
-        // Check for duplicate content if indexing is enabled
-        if (this.useIndexing && this.documentIndex) {
-            await this.ensureIndexInitialized();
-            const duplicateId = this.documentIndex.findDuplicateContent(content);
-            if (duplicateId) {
-                console.warn(`[DocumentManager] Duplicate content detected, existing document: ${duplicateId}`);
-                // Optionally, you might want to return the existing document or throw an error
-                // For now, we'll continue with creating a new document
+            // Only set maxSize and overlap if environment variables are not -1
+            if (envChunkSize > 0) {
+                chunkOptions.maxSize = envChunkSize;
             }
-        }
+            if (envChunkOverlap > 0) {
+                chunkOptions.overlap = envChunkOverlap;
+            }
 
-        // Create chunks using intelligent chunker with environment variable overrides
-        // Use -1 to use intelligent chunker's content-type-specific defaults
-        const envChunkSize = parseInt(process.env.MCP_CHUNK_SIZE || '-1');
-        const envChunkOverlap = parseInt(process.env.MCP_CHUNK_OVERLAP || '-1');
-        
-        const chunkOptions: any = {
-            adaptiveSize: true,
-            addContext: true
-        };
+            const chunks = await this.intelligentChunker.createChunks(id, content, chunkOptions, metadata, title);
 
-        // Only set maxSize and overlap if environment variables are not -1
-        if (envChunkSize > 0) {
-            chunkOptions.maxSize = envChunkSize;
-        }
-        if (envChunkOverlap > 0) {
-            chunkOptions.overlap = envChunkOverlap;
-        }
-
-        const chunks = await this.intelligentChunker.createChunks(id, content, chunkOptions, metadata, title);
-
-        // DIAGNOSTIC: Log chunk status immediately after creation
-        console.error(`[DocumentManager]   Total chunks: ${chunks.length}`);
-        const chunksWithEmbeddings = chunks.filter(c => c.embeddings && c.embeddings.length > 0);
-        console.error(`[DocumentManager]   Chunks with embeddings: ${chunksWithEmbeddings.length}`);
-        if (chunksWithEmbeddings.length > 0 && chunksWithEmbeddings.length < chunks.length) {
-            console.error(`[DocumentManager]   WARNING: Some chunks missing embeddings!`);
-            chunks.forEach((chunk, idx) => {
-                const hasEmbedding = chunk.embeddings && chunk.embeddings.length > 0;
-                if (!hasEmbedding) {
-                    console.error(`[DocumentManager]     Chunk ${idx} (${chunk.id}) has NO embedding - content_length: ${chunk.content.length}`);
-                }
-            });
-        }
-
-        // Add detected languages to metadata
-        const metadataWithLanguages = {
-            ...metadata,
-            languages: detectedLanguages,
-        };
-
-        const document: Document = {
-            id,
-            title,
-            content,
-            metadata: metadataWithLanguages,
-            chunks,
-            created_at: now,
-            updated_at: now,
-        };
-
-        const filePath = this.getDocumentPath(id);
-        await writeFile(filePath, JSON.stringify(document, null, 2));
-
-        // Create markdown file with the document content
-        const mdFilePath = this.getDocumentMdPath(id);
-        const mdContent = `# ${title}\n\n${content}`;
-        await writeFile(mdFilePath, mdContent, 'utf-8');
-
-        // Add to index if enabled
-        if (this.useIndexing && this.documentIndex) {
-            this.documentIndex.addDocument(id, filePath, content, chunks, title, metadata);
-        }
-
-        // Generate tags in background if enabled
-        if (this.useTagGeneration) {
-            this.generateTagsForDocument(id, title, content);
-        }
-
-        // Add chunks to vector database if enabled
-        console.error(`[DocumentManager] === CHUNK STORAGE START ===`);
-        console.error(`[DocumentManager] useVectorDb: ${this.useVectorDb}, vectorDatabase: ${!!this.vectorDatabase}`);
-        
-        if (this.useVectorDb && this.vectorDatabase) {
-            try {
-                console.error(`[DocumentManager] Adding chunks to vector DB - useVectorDb: ${this.useVectorDb}, vectorDatabase exists: ${!!this.vectorDatabase}`);
-
-                // Filter chunks that have embeddings
-                const chunksWithEmbeddings = chunks.filter(chunk => chunk.embeddings && chunk.embeddings.length > 0);
-                console.error(`[DocumentManager] Total chunks: ${chunks.length}, Chunks with embeddings: ${chunksWithEmbeddings.length}`);
-
-                // DIAGNOSTIC: Log details of chunks without embeddings
-                const chunksWithoutEmbeddings = chunks.filter(chunk => !chunk.embeddings || chunk.embeddings.length === 0);
-                if (chunksWithoutEmbeddings.length > 0) {
-                    chunksWithoutEmbeddings.forEach((chunk, idx) => {
-                        console.error(`  [${idx}] chunk_id: ${chunk.id}, chunk_index: ${chunk.chunk_index}, content_length: ${chunk.content.length}, embeddings: ${chunk.embeddings ? chunk.embeddings.length : 'null'}`);
-                    });
-                }
-
-                // Ensure vector DB is ready before adding chunks
-                const vectorDbReady = await this.ensureVectorDbReady();
-                if (!vectorDbReady) {
-                    console.error('[DocumentManager] Vector DB not ready, queueing chunk indexing');
-                    console.error('[DocumentManager] Possible causes: initialization timeout, init failure, or isInitialized() returning false');
-                    this.queueVectorChunks(id, chunksWithEmbeddings);
-                    return document;
-                }
-
-                // Check if vector DB is initialized (diagnostic)
-                const isInitialized = (this.vectorDatabase as any).isInitialized?.() ?? true;
-                console.error(`[DocumentManager] Vector DB initialized: ${isInitialized}`);
-                if (!isInitialized) {
-                    console.error('[DocumentManager] CRITICAL: Vector DB reports not initialized even after ensureVectorDbReady() returned true!');
-                }
-
-                if (chunksWithEmbeddings.length > 0) {
-                    console.error(`[DocumentManager] Calling addChunks for ${chunksWithEmbeddings.length} chunks...`);
-                    await this.vectorDatabase.addChunks(chunksWithEmbeddings);
-                    console.error(`[DocumentManager] Successfully added ${chunksWithEmbeddings.length} chunks to vector DB`);
-                } else {
-                    console.warn(`[DocumentManager] No chunks with embeddings to add to vector DB (total: ${chunks.length})`);
-                    console.warn(`[DocumentManager] CRITICAL: All chunks are missing embeddings! This will cause search to fail.`);
-                }
-            } catch (error) {
-                console.error('[DocumentManager] FAILED to add chunks to vector database. Error:', error);
-                console.error('[DocumentManager] Error details:', {
-                    message: error instanceof Error ? error.message : String(error),
-                    stack: error instanceof Error ? error.stack : undefined,
-                    name: error instanceof Error ? error.name : undefined
+            // DIAGNOSTIC: Log chunk status immediately after creation
+            console.error(`[DocumentManager]   Total chunks: ${chunks.length}`);
+            const chunksWithEmbeddings = chunks.filter(c => c.embeddings && c.embeddings.length > 0);
+            console.error(`[DocumentManager]   Chunks with embeddings: ${chunksWithEmbeddings.length}`);
+            if (chunksWithEmbeddings.length > 0 && chunksWithEmbeddings.length < chunks.length) {
+                console.error(`[DocumentManager]   WARNING: Some chunks missing embeddings!`);
+                chunks.forEach((chunk, idx) => {
+                    const hasEmbedding = chunk.embeddings && chunk.embeddings.length > 0;
+                    if (!hasEmbedding) {
+                        console.error(`[DocumentManager]     Chunk ${idx} (${chunk.id}) has NO embedding - content_length: ${chunk.content.length}`);
+                    }
                 });
-                // Continue without vector DB - non-critical error
             }
-        } else {
-            console.warn(`[DocumentManager] Vector DB not enabled or not available. useVectorDb: ${this.useVectorDb}, vectorDatabase: ${!!this.vectorDatabase}`);
-        }
 
-        const markdownCodeBlocks = extractMarkdownCodeBlocks(content);
-        if (markdownCodeBlocks.length > 0) {
-            await this.addCodeBlocks(id, markdownCodeBlocks, {
-                source: metadata.source,
-                source_url: metadata.source_url,
-                crawl_id: metadata.crawl_id,
-                contentType: metadata.contentType || metadata.content_type,
+            // Add detected languages to metadata
+            const metadataWithLanguages = {
+                ...metadata,
+                languages: detectedLanguages,
+            };
+
+            const document: Document = {
+                id,
+                title,
+                content,
+                metadata: metadataWithLanguages,
+                chunks,
+                created_at: now,
+                updated_at: now,
+            };
+
+            const filePath = this.getDocumentPath(id);
+            await writeFile(filePath, JSON.stringify(document, null, 2));
+
+            // Create markdown file with the document content
+            const mdFilePath = this.getDocumentMdPath(id);
+            const mdContent = `# ${title}\n\n${content}`;
+            await writeFile(mdFilePath, mdContent, 'utf-8');
+
+            // Add to index if enabled
+            if (this.useIndexing && this.documentIndex) {
+                this.documentIndex.addDocument(id, filePath, content, chunks, title, metadata);
+            }
+
+            // Generate tags in background if enabled
+            if (this.useTagGeneration) {
+                this.generateTagsForDocument(id, title, content);
+            }
+
+            // Add chunks to vector database if enabled
+            console.error(`[DocumentManager] === CHUNK STORAGE START ===`);
+            console.error(`[DocumentManager] useVectorDb: ${this.useVectorDb}, vectorDatabase: ${!!this.vectorDatabase}`);
+            
+            if (this.useVectorDb && this.vectorDatabase) {
+                try {
+                    console.error(`[DocumentManager] Adding chunks to vector DB - useVectorDb: ${this.useVectorDb}, vectorDatabase exists: ${!!this.vectorDatabase}`);
+
+                    // Filter chunks that have embeddings
+                    const chunksWithEmbeddings = chunks.filter(chunk => chunk.embeddings && chunk.embeddings.length > 0);
+                    console.error(`[DocumentManager] Total chunks: ${chunks.length}, Chunks with embeddings: ${chunksWithEmbeddings.length}`);
+
+                    // DIAGNOSTIC: Log details of chunks without embeddings
+                    const chunksWithoutEmbeddings = chunks.filter(chunk => !chunk.embeddings || chunk.embeddings.length === 0);
+                    if (chunksWithoutEmbeddings.length > 0) {
+                        chunksWithoutEmbeddings.forEach((chunk, idx) => {
+                            console.error(`  [${idx}] chunk_id: ${chunk.id}, chunk_index: ${chunk.chunk_index}, content_length: ${chunk.content.length}, embeddings: ${chunk.embeddings ? chunk.embeddings.length : 'null'}`);
+                        });
+                    }
+
+                    // Ensure vector DB is ready before adding chunks
+                    const vectorDbReady = await this.ensureVectorDbReady();
+                    if (!vectorDbReady) {
+                        console.error('[DocumentManager] Vector DB not ready, queueing chunk indexing');
+                        console.error('[DocumentManager] Possible causes: initialization timeout, init failure, or isInitialized() returning false');
+                        this.queueVectorChunks(id, chunksWithEmbeddings);
+                        return document;
+                    }
+
+                    // Check if vector DB is initialized (diagnostic)
+                    const isInitialized = (this.vectorDatabase as any).isInitialized?.() ?? true;
+                    console.error(`[DocumentManager] Vector DB initialized: ${isInitialized}`);
+                    if (!isInitialized) {
+                        console.error('[DocumentManager] CRITICAL: Vector DB reports not initialized even after ensureVectorDbReady() returned true!');
+                    }
+
+                    if (chunksWithEmbeddings.length > 0) {
+                        console.error(`[DocumentManager] Calling addChunks for ${chunksWithEmbeddings.length} chunks...`);
+                        await this.vectorDatabase.addChunks(chunksWithEmbeddings);
+                        console.error(`[DocumentManager] Successfully added ${chunksWithEmbeddings.length} chunks to vector DB`);
+                    } else {
+                        console.warn(`[DocumentManager] No chunks with embeddings to add to vector DB (total: ${chunks.length})`);
+                        console.warn(`[DocumentManager] CRITICAL: All chunks are missing embeddings! This will cause search to fail.`);
+                    }
+                } catch (error) {
+                    console.error('[DocumentManager] FAILED to add chunks to vector database. Error:', error);
+                    console.error('[DocumentManager] Error details:', {
+                        message: error instanceof Error ? error.message : String(error),
+                        stack: error instanceof Error ? error.stack : undefined,
+                        name: error instanceof Error ? error.name : undefined
+                    });
+                    // Queue chunks for later retry instead of silently failing
+                    const chunksWithEmbeddings = chunks.filter(chunk => chunk.embeddings && chunk.embeddings.length > 0);
+                    if (chunksWithEmbeddings.length > 0) {
+                        console.error('[DocumentManager] Queueing chunks for deferred indexing due to error');
+                        this.queueVectorChunks(id, chunksWithEmbeddings);
+                    }
+                    // Continue without vector DB - non-critical error
+                }
+            } else {
+                console.warn(`[DocumentManager] Vector DB not enabled or not available. useVectorDb: ${this.useVectorDb}, vectorDatabase: ${!!this.vectorDatabase}`);
+            }
+
+            const markdownCodeBlocks = extractMarkdownCodeBlocks(content);
+            if (markdownCodeBlocks.length > 0) {
+                try {
+                    await this.addCodeBlocks(id, markdownCodeBlocks, {
+                        source: metadata.source,
+                        source_url: metadata.source_url,
+                        crawl_id: metadata.crawl_id,
+                        contentType: metadata.contentType || metadata.content_type,
+                    });
+                } catch (error) {
+                    console.error('[DocumentManager] Failed to add code blocks:', error);
+                    // Continue without code blocks - non-critical error
+                }
+            }
+
+            console.error(`[DocumentManager] === CHUNK STORAGE END ===`);
+            return document;
+        } catch (error) {
+            console.error('[DocumentManager] UNHANDLED ERROR in addDocument:', error);
+            console.error('[DocumentManager] Error details:', {
+                message: error instanceof Error ? error.message : String(error),
+                stack: error instanceof Error ? error.stack : undefined,
+                name: error instanceof Error ? error.name : undefined
             });
+            // Re-throw to allow caller to handle the error
+            throw new Error(`Failed to add document: ${error instanceof Error ? error.message : String(error)}`);
         }
-
-        console.error(`[DocumentManager] === CHUNK STORAGE END ===`);
-        return document;
     }
 
     async getDocument(id: string): Promise<Document | null> {

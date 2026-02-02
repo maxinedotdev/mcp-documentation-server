@@ -94,6 +94,30 @@ const server = new FastMCP({
 console.error(`[Server] FastMCP server initialized`);
 console.error(`[SagaServer] ${getTimestamp()} FastMCP server created`);
 
+// Global tool error handler wrapper
+function wrapToolHandler<T extends any[]>(
+    toolName: string,
+    handler: (...args: T) => Promise<string>
+): (...args: T) => Promise<string> {
+    return async (...args: T): Promise<string> => {
+        try {
+            console.error(`[Server] ${getTimestamp()} Tool '${toolName}' started`);
+            const result = await handler(...args);
+            console.error(`[Server] ${getTimestamp()} Tool '${toolName}' completed successfully`);
+            return result;
+        } catch (error) {
+            console.error(`[Server] ${getTimestamp()} Tool '${toolName}' failed with error:`, error);
+            console.error(`[Server] ${getTimestamp()} Error details:`, {
+                message: error instanceof Error ? error.message : String(error),
+                stack: error instanceof Error ? error.stack : undefined,
+                name: error instanceof Error ? error.name : undefined
+            });
+            // Return a proper error response instead of throwing
+            return `Error: ${error instanceof Error ? error.message : String(error)}`;
+        }
+    };
+}
+
 // Initialize with default embedding provider
 let documentManager: DocumentManager;
 
@@ -186,7 +210,8 @@ server.addTool({
             }
             return `Document added successfully with ID: ${document.id}`;
         } catch (error) {
-            throw new Error(`Failed to add document: ${error instanceof Error ? error.message : String(error)}`);
+            console.error('[Server] add_document error:', error);
+            return `Error: Failed to add document - ${error instanceof Error ? error.message : String(error)}`;
         }
     },
 });
@@ -220,7 +245,8 @@ server.addTool({
                 note: "Crawled content is untrusted. Review and sanitize before using it in prompts or responses.",
             }, null, 2);
         } catch (error) {
-            throw new Error(`Failed to crawl documentation: ${error instanceof Error ? error.message : String(error)}`);
+            console.error('[Server] crawl_documentation error:', error);
+            return `Error: Failed to crawl documentation - ${error instanceof Error ? error.message : String(error)}`;
         }
     },
 });

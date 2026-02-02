@@ -139,6 +139,10 @@ export class LanceDBAdapter implements VectorDatabase {
                 logger.info(`[PID:${pid}] Acquired LanceDB initialization lock`);
                 console.error(`[LanceDB] ${getTimestamp()} acquireLock SUCCESS - acquired after ${duration}ms (${retries} retries)`);
                 console.error(`[LanceDB] ${getTimestamp()} Memory: ${getMemoryUsage()}`);
+                
+                // Register cleanup handler for this process
+                this.registerLockCleanup();
+                
                 return true;
             } catch (err) {
                 // Lock exists, check if stale
@@ -176,14 +180,61 @@ export class LanceDBAdapter implements VectorDatabase {
         return false;
     }
 
+    // Register cleanup handler for lock file
+    private lockCleanupRegistered = false;
+    private registerLockCleanup(): void {
+        if (this.lockCleanupRegistered) {
+            return;
+        }
+        
+        const pid = process.pid;
+        const lockFile = this.getLockFilePath();
+        
+        const cleanup = () => {
+            try {
+                if (fs.existsSync(lockFile)) {
+                    const lockData = JSON.parse(fs.readFileSync(lockFile, "utf8"));
+                    // Only remove if we own the lock
+                    if (lockData.pid === pid) {
+                        fs.unlinkSync(lockFile);
+                        logger.info(`[PID:${pid}] Released LanceDB initialization lock on process exit`);
+                        console.error(`[LanceDB] ${getTimestamp()} Lock cleanup: Removed lock file for PID:${pid}`);
+                    }
+                }
+            } catch (err) {
+                logger.warn(`[PID:${pid}] Failed to cleanup lock on exit: ${err}`);
+            }
+        };
+        
+        // Register cleanup handlers
+        process.on('exit', cleanup);
+        process.on('SIGINT', () => {
+            cleanup();
+            process.exit(0);
+        });
+        process.on('SIGTERM', () => {
+            cleanup();
+            process.exit(0);
+        });
+        
+        this.lockCleanupRegistered = true;
+    }
+
     // Release lock
     private releaseLock(): void {
         const lockFile = this.getLockFilePath();
         const pid = process.pid;
         try {
             if (fs.existsSync(lockFile)) {
-                fs.unlinkSync(lockFile);
-                logger.info(`[PID:${pid}] Released LanceDB initialization lock`);
+                const lockData = JSON.parse(fs.readFileSync(lockFile, "utf8"));
+                // Only release if we own the lock
+                if (lockData.pid === pid) {
+                    fs.unlinkSync(lockFile);
+                    logger.info(`[PID:${pid}] Released LanceDB initialization lock`);
+                    console.error(`[LanceDB] ${getTimestamp()} Lock released for PID:${pid}`);
+                } else {
+                    logger.warn(`[PID:${pid}] Attempted to release lock owned by PID:${lockData.pid}`);
+                }
             }
         } catch (err) {
             logger.warn(`[PID:${pid}] Failed to release lock: ${err}`);
