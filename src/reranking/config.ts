@@ -3,6 +3,7 @@
  */
 
 import type { RerankerConfig, RerankerProviderType } from '../types.js';
+import { isAppleSilicon, getDefaultModelPath } from './apple-silicon-detection.js';
 
 /**
  * Default reranking configuration values
@@ -17,8 +18,9 @@ const DEFAULT_CONFIG = {
     topK: 10,
     timeout: 30000,
     // MLX-specific configuration
-    mlxModelPath: '',  // Path to MLX model directory
+    mlxModelPath: '',  // Path to MLX model directory (auto-detected on Apple Silicon)
     mlxPythonPath: 'python3',  // Path to Python executable
+    autoConfigureMlx: true,  // Enable auto-configuration of MLX on Apple Silicon
 };
 
 /**
@@ -26,12 +28,35 @@ const DEFAULT_CONFIG = {
  * @returns Reranking configuration
  */
 function loadConfig(): RerankerConfig & { enabled: boolean; mlxModelPath: string; mlxPythonPath: string } {
+    // Check if auto-configuration is enabled (default: true)
+    const autoConfigureMlx = process.env.MCP_RERANKING_AUTO_CONFIGURE_MLX !== 'false';
+    
+    // Auto-detect Apple Silicon and configure MLX if enabled
+    let provider: RerankerProviderType;
+    let mlxModelPath: string;
+    
+    if (autoConfigureMlx && isAppleSilicon()) {
+        // Auto-configure MLX on Apple Silicon
+        console.error('[MLX Auto-Config] Apple Silicon detected, auto-configuring MLX provider');
+        
+        // Use MLX as default provider on Apple Silicon unless explicitly overridden
+        provider = (process.env.MCP_RERANKING_PROVIDER as RerankerProviderType) || 'mlx';
+        
+        // Set default model path unless explicitly overridden (empty string counts as override)
+        const envModelPath = process.env.MCP_RERANKING_MLX_MODEL_PATH;
+        mlxModelPath = envModelPath !== undefined ? envModelPath : getDefaultModelPath();
+    } else {
+        // Use default provider
+        provider = (process.env.MCP_RERANKING_PROVIDER as RerankerProviderType) || DEFAULT_CONFIG.provider;
+        mlxModelPath = process.env.MCP_RERANKING_MLX_MODEL_PATH || DEFAULT_CONFIG.mlxModelPath;
+    }
+    
     return {
         // Feature flag - opt-out by default (enabled unless explicitly set to 'false')
         enabled: process.env.MCP_RERANKING_ENABLED !== 'false',
 
         // API configuration
-        provider: (process.env.MCP_RERANKING_PROVIDER as RerankerProviderType) || DEFAULT_CONFIG.provider,
+        provider,
         baseUrl: process.env.MCP_RERANKING_BASE_URL || DEFAULT_CONFIG.baseUrl,
         apiKey: process.env.MCP_RERANKING_API_KEY || DEFAULT_CONFIG.apiKey,
         model: process.env.MCP_RERANKING_MODEL || DEFAULT_CONFIG.model,
@@ -42,7 +67,7 @@ function loadConfig(): RerankerConfig & { enabled: boolean; mlxModelPath: string
         timeout: parseInt(process.env.MCP_RERANKING_TIMEOUT || DEFAULT_CONFIG.timeout.toString(), 10),
 
         // MLX-specific configuration
-        mlxModelPath: process.env.MCP_RERANKING_MLX_MODEL_PATH || DEFAULT_CONFIG.mlxModelPath,
+        mlxModelPath,
         mlxPythonPath: process.env.MCP_RERANKING_MLX_PYTHON_PATH || DEFAULT_CONFIG.mlxPythonPath,
     };
 }
