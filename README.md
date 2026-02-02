@@ -220,8 +220,29 @@ If the vector database fails to initialize, the server will continue running wit
 ```bash
 npm run dev      # Development mode
 npm run build    # Build TypeScript
-npm test         # Run tests
 ```
+
+### Testing
+
+The project uses Vitest for testing. Available test commands:
+
+```bash
+npm run test:unit        # Run unit tests only
+npm run test:integration # Run integration tests only
+npm run test:benchmark   # Run performance benchmarks
+npm run test:all         # Run all tests
+npm run test:watch       # Run tests in watch mode
+npm run test:coverage    # Run tests with coverage report
+```
+
+**Coverage Reporting:**
+- Coverage reports are generated in the `coverage/` directory
+- HTML reports can be opened at `coverage/index.html`
+- Coverage thresholds are enforced: 80% for statements, branches, functions, and lines
+
+**CI/CD Integration:**
+- JUnit XML reports are generated for CI environments
+- Reports are saved to `test-results/junit.xml` when running in CI
 
 ## Contributing
 
