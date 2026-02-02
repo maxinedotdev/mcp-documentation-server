@@ -189,6 +189,10 @@ export async function fetchWithTimeout(
 ): Promise<Response> {
     const { timeoutMs = DEFAULT_TIMEOUT_MS, ...fetchOptions } = options;
 
+    // Log all HTTP requests to identify HEAD requests
+    const method = fetchOptions.method || 'GET';
+    logger.info(`[HTTP_REQUEST] ${method} ${url}`);
+
     // If timeout is invalid or zero, fall back to native fetch without timeout
     if (!timeoutMs || timeoutMs <= 0) {
         logger.warn(`Invalid timeout value ${timeoutMs}, using native fetch without timeout`);
@@ -203,14 +207,17 @@ export async function fetchWithTimeout(
             ...fetchOptions,
             signal: controller.signal,
         });
+        logger.info(`[HTTP_RESPONSE] ${method} ${url} - Status: ${response.status}`);
         return response;
     } catch (error) {
         // Check if this is an abort error (timeout)
         if (error instanceof Error && error.name === 'AbortError') {
+            logger.error(`[HTTP_TIMEOUT] ${method} ${url} - Timed out after ${timeoutMs}ms`);
             throw new RequestTimeoutError(timeoutMs, url);
         }
 
         // Re-throw other errors (network errors, etc.)
+        logger.error(`[HTTP_ERROR] ${method} ${url} - Error: ${error instanceof Error ? error.message : String(error)}`);
         throw error;
     } finally {
         // Always clear the timeout to prevent memory leaks

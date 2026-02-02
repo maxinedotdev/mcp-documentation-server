@@ -350,11 +350,15 @@ export class OpenAiEmbeddingProvider implements EmbeddingProvider {
     }
 
     async generateEmbedding(text: string): Promise<number[]> {
+        console.error(`[OpenAiEmbeddingProvider:${this.instanceId}] generateEmbedding called for text length: ${text.length}`);
+
         if (this.cache) {
             const cachedEmbedding = await this.cache.getEmbedding(text);
             if (cachedEmbedding) {
+                console.error(`[OpenAiEmbeddingProvider:${this.instanceId}] Cache HIT`);
                 return cachedEmbedding;
             }
+            console.error(`[OpenAiEmbeddingProvider:${this.instanceId}] Cache MISS`);
         }
 
         const headers: Record<string, string> = {
@@ -369,6 +373,8 @@ export class OpenAiEmbeddingProvider implements EmbeddingProvider {
         // MCP_EMBEDDING_TIMEOUT_MS → MCP_REQUEST_TIMEOUT_MS → default (30000ms)
         const timeoutMs = getRequestTimeout('embedding');
         const url = `${this.baseUrl}/embeddings`;
+
+        console.error(`[OpenAiEmbeddingProvider:${this.instanceId}] Making POST request to ${url} with timeout ${timeoutMs}ms`);
 
         try {
             // Use fetchWithTimeout to enforce the timeout via AbortController

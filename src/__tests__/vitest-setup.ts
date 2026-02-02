@@ -121,6 +121,19 @@ function stubFetch(input: RequestInfo, init?: RequestInit): Promise<Response> {
 
 async function startFetchStub(): Promise<void> {
     const baseUrl = process.env.MCP_EMBEDDING_BASE_URL;
+    
+    // Force stub fetch if explicitly requested (for testing)
+    const forceStub = process.env.MCP_FORCE_STUB_FETCH === 'true';
+    
+    if (forceStub) {
+        console.error('[vitest-setup] MCP_FORCE_STUB_FETCH=true, forcing fetch stub regardless of reachability');
+        originalFetch = globalThis.fetch;
+        globalThis.fetch = stubFetch;
+        stubEnabled = true;
+        console.error('[vitest-setup] Fetch stub enabled (forced)');
+        return;
+    }
+    
     if (baseUrl && (await isUrlReachable(baseUrl))) {
         console.error('[vitest-setup] Embedding base URL reachable; not stubbing fetch:', baseUrl);
         return;
