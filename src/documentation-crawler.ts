@@ -23,7 +23,7 @@ type CrawlQueueItem = {
     depth: number;
 };
 
-export type CrawlOptions = {
+type CrawlOptions = {
     seedUrl: string;
     maxPages: number;
     maxDepth: number;
@@ -31,7 +31,7 @@ export type CrawlOptions = {
     accepted_languages?: string[]; // Override for MCP_ACCEPTED_LANGUAGES
 };
 
-export type CrawlResult = {
+type CrawlResult = {
     crawlId: string;
     pagesIngested: number;
     pagesSkipped: number;

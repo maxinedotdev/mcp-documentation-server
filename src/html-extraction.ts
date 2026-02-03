@@ -9,7 +9,7 @@ type HtmlExtractionOptions = {
     fallbackTitle?: string;
 };
 
-export type HtmlExtractionResult = {
+type HtmlExtractionResult = {
     text: string;
     title: string;
     links: string[];

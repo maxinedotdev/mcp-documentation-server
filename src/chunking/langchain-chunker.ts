@@ -1,7 +1,7 @@
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 import type { EmbeddingProvider, DocumentChunk } from "../types.js";
 
-export interface ChunkOptions {
+interface ChunkOptions {
     maxSize?: number;
     overlap?: number;
 }

@@ -269,28 +269,3 @@ export function getEmbeddingCache(maxSize?: number, modelIdentifier?: string): E
  * Clear the global embedding cache singleton
  * Useful for testing or when configuration changes significantly
  */
-export function clearEmbeddingCache(): void {
-    if (globalEmbeddingCache) {
-        globalEmbeddingCache.clear();
-        console.error('[EmbeddingCache] Singleton cache cleared');
-    }
-}
-
-/**
- * Reset the global embedding cache singleton entirely
- * This forces a new instance to be created on next getEmbeddingCache call
- * Useful for testing or complete cache invalidation
- */
-export function resetEmbeddingCache(): void {
-    globalEmbeddingCache = null;
-    globalCacheConfig = null;
-    console.error('[EmbeddingCache] Singleton instance reset');
-}
-
-/**
- * Check if a singleton embedding cache instance exists
- * @returns True if singleton instance exists
- */
-export function hasEmbeddingCache(): boolean {
-    return globalEmbeddingCache !== null;
-}

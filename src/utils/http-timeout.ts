@@ -17,7 +17,7 @@ export const ENV_TIMEOUT_EMBEDDING = 'MCP_EMBEDDING_TIMEOUT_MS';
 /**
  * Operation types for timeout configuration
  */
-export type TimeoutOperationType = 'ai-search' | 'embedding' | 'global';
+type TimeoutOperationType = 'ai-search' | 'embedding' | 'global';
 
 /**
  * Custom error class for request timeout errors.
@@ -103,7 +103,7 @@ export function parseTimeoutValue(
  *
  * @returns The global timeout value in milliseconds
  */
-export function getGlobalTimeout(): number {
+function getGlobalTimeout(): number {
     return parseTimeoutValue(
         process.env[ENV_TIMEOUT_GLOBAL],
         DEFAULT_TIMEOUT_MS,
@@ -146,7 +146,7 @@ export function getRequestTimeout(operation: TimeoutOperationType): number {
 /**
  * Options for the fetchWithTimeout function
  */
-export interface FetchWithTimeoutOptions extends RequestInit {
+interface FetchWithTimeoutOptions extends RequestInit {
     /** Timeout in milliseconds (overrides default) */
     timeoutMs?: number;
 }
