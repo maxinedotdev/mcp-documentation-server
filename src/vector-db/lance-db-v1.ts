@@ -68,7 +68,7 @@ import {
     type ValidationReport,
     type ValidationDatabase,
 } from './integrity-validator.js';
-import type { CodeBlock, CodeBlockSearchResult } from '../types.js';
+import type { CodeBlock, CodeBlockSearchResult, DocumentChunk, SearchResult } from '../types.js';
 import { normalizeLanguageTag } from '../code-block-utils.js';
 
 const logger = getLogger('LanceDBV1');
@@ -649,6 +649,23 @@ export class LanceDBV1 implements ValidationDatabase {
     }
 
     /**
+     * Find a document by content hash
+     */
+    async getDocumentByContentHash(contentHash: string): Promise<DocumentV1 | null> {
+        if (!this.initialized || !this.documentsTable) {
+            throw new Error('Database not initialized');
+        }
+
+        const results = await this.documentsTable
+            .query()
+            .where(`content_hash = '${contentHash}'`)
+            .limit(1)
+            .toArray();
+
+        return (results[0] as DocumentV1) ?? null;
+    }
+
+    /**
      * Add document tags in batch
      */
     async addDocumentTags(documentId: string, tags: Array<{ tag: string; is_generated: boolean }>): Promise<void> {
@@ -695,6 +712,35 @@ export class LanceDBV1 implements ValidationDatabase {
         await withRetry(async () => {
             await this.documentLanguagesTable!.add(rows);
         }, 'addDocumentLanguages');
+    }
+
+    /**
+     * Add keywords in batch
+     */
+    async addKeywords(
+        documentId: string,
+        keywords: Array<{ keyword: string; source: 'title' | 'content'; frequency: number }>
+    ): Promise<void> {
+        if (!this.initialized) {
+            throw new Error('Database not initialized');
+        }
+        if (!this.keywordsTable || keywords.length === 0) {
+            return;
+        }
+
+        const now = getCurrentTimestamp();
+        const rows: KeywordV1[] = keywords.map((keyword) => ({
+            id: generateUUID(),
+            keyword: keyword.keyword.toLowerCase(),
+            document_id: documentId,
+            source: keyword.source,
+            frequency: keyword.frequency,
+            created_at: now,
+        }));
+
+        await withRetry(async () => {
+            await this.keywordsTable!.add(rows);
+        }, 'addKeywords');
     }
 
     /**
@@ -1433,6 +1479,53 @@ export class LanceDBV1 implements ValidationDatabase {
             source_url: row.source_url,
             created_at: row.created_at,
         })).sort((a: any, b: any) => a.block_index - b.block_index);
+    }
+
+    /**
+     * Search chunks by vector similarity (legacy-compatible)
+     */
+    async search(queryEmbedding: number[], limit: number, filter?: string): Promise<SearchResult[]> {
+        if (!this.initialized || !this.chunksTable) {
+            throw new Error('Database not initialized');
+        }
+
+        const query = this.chunksTable.search(queryEmbedding).limit(limit);
+        if (filter && filter.trim().length > 0) {
+            query.where(filter);
+        }
+        const results = await query.toArray();
+
+        return results.map((row: any) => {
+            const chunk: DocumentChunk = {
+                id: row.id,
+                document_id: row.document_id,
+                chunk_index: row.chunk_index,
+                content: row.content,
+                embeddings: row.embedding,
+                start_position: row.start_position,
+                end_position: row.end_position,
+                metadata: {
+                    surrounding_context: row.surrounding_context ?? undefined,
+                    semantic_topic: row.semantic_topic ?? undefined,
+                },
+            };
+
+            return {
+                chunk,
+                score: row._distance ? (2 - row._distance) / 2 : 1,
+            };
+        });
+    }
+
+    async getDocumentTagsDetailed(documentId: string): Promise<DocumentTagV1[]> {
+        if (!this.initialized || !this.documentTagsTable) {
+            throw new Error('Database not initialized');
+        }
+        const results = await this.documentTagsTable!
+            .query()
+            .where(`document_id = '${documentId}'`)
+            .toArray();
+        return results as DocumentTagV1[];
     }
 
     async getDocumentTags(documentId: string): Promise<string[]> {
