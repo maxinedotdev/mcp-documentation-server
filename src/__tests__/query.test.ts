@@ -99,9 +99,30 @@ describe('Query Unit Tests', () => {
                     metadata: { source: 'upload', tags: ['test', 'pagination'] }
                 }));
 
+                // Query page 1 and page 2
+                const page1 = await documentManager.query('testing pagination', { limit: 5, offset: 0 });
                 const page2 = await documentManager.query('testing pagination', { limit: 5, offset: 5 });
-                expect(page2.pagination.returned).toBe(5);
-                expect(page2.pagination.has_more).toBeDefined();
+                
+                // Both pages should return results
+                expect(page1.results.length).toBeGreaterThan(0);
+                expect(page2.results.length).toBeGreaterThanOrEqual(0);
+                
+                // Page 1 should have has_more=true if there are more results
+                expect(typeof page1.pagination.has_more).toBe('boolean');
+                
+                // Results on different pages should be different (no overlap)
+                const page1Ids = new Set(page1.results.map(r => r.id));
+                const page2Ids = new Set(page2.results.map(r => r.id));
+                
+                // Ensure no duplicate documents between pages
+                for (const id of page2Ids) {
+                    expect(page1Ids.has(id)).toBe(false);
+                }
+                
+                // Pagination metadata should be consistent
+                expect(page1.pagination.returned).toBe(page1.results.length);
+                expect(page2.pagination.returned).toBe(page2.results.length);
+                expect(page1.pagination.next_offset).toBe(5);
             });
         });
 

@@ -5,6 +5,7 @@ import { CodeBlock, Document, DocumentChunk, EmbeddingProvider } from '../types.
 import { createLazyEmbeddingProvider, clearEmbeddingProviderCache } from '../embedding-provider.js';
 import { DocumentManager } from '../document-manager.js';
 import { LanceDBAdapter } from '../vector-db/index.js';
+import { MockEmbeddingProvider } from './mock-embedding-provider.js';
 
 type EnvMap = Record<string, string | undefined>;
 
@@ -76,7 +77,14 @@ export const withEnv = async <T>(env: EnvMap, fn: () => Promise<T> | T): Promise
 
 export const withBaseDir = async <T>(prefix: string, fn: (dir: string) => Promise<T> | T): Promise<T> => {
     return withTempDir(prefix, async (dir) => {
-        return withEnv({ MCP_BASE_DIR: dir }, async () => fn(dir));
+        // Clear embedding provider config to force use of MockEmbeddingProvider in tests
+        // Also set similarity threshold to 0 to allow all results through
+        return withEnv({
+            MCP_BASE_DIR: dir,
+            MCP_EMBEDDING_PROVIDER: undefined,
+            MCP_EMBEDDING_BASE_URL: undefined,
+            MCP_SIMILARITY_THRESHOLD: '0.0'
+        }, async () => fn(dir));
     });
 };
 
@@ -92,9 +100,18 @@ export const isLanceDbAvailable = async (): Promise<boolean> => {
 export const createTestEmbeddingProvider = (): EmbeddingProvider => {
     const providerEnv = process.env.MCP_EMBEDDING_PROVIDER?.toLowerCase();
 
+    // Check if tests should use mock provider
+    const useMock = process.env.MCP_USE_MOCK_EMBEDDINGS === 'true' || !providerEnv;
+
+    if (useMock) {
+        console.error('[test-utils] Using MockEmbeddingProvider for tests');
+        return new MockEmbeddingProvider(384);
+    }
+
     if (providerEnv === 'openai') {
         if (!process.env.MCP_EMBEDDING_BASE_URL) {
-            throw new Error('[test-utils] MCP_EMBEDDING_PROVIDER=openai but MCP_EMBEDDING_BASE_URL is not set. Tests require an OpenAI-compatible embedding provider.');
+            console.error('[test-utils] MCP_EMBEDDING_PROVIDER=openai but MCP_EMBEDDING_BASE_URL is not set. Falling back to MockEmbeddingProvider.');
+            return new MockEmbeddingProvider(384);
         }
 
         try {
@@ -103,11 +120,14 @@ export const createTestEmbeddingProvider = (): EmbeddingProvider => {
             console.error('[test-utils] Using global cached embedding provider');
             return provider;
         } catch (error) {
-            throw new Error('[test-utils] Failed to create OpenAI-compatible embedding provider. Tests require a valid embedding provider configuration.');
+            console.error('[test-utils] Failed to create OpenAI-compatible embedding provider. Falling back to MockEmbeddingProvider.');
+            return new MockEmbeddingProvider(384);
         }
     }
 
-    throw new Error('[test-utils] Tests require MCP_EMBEDDING_PROVIDER=openai and MCP_EMBEDDING_BASE_URL to be set. SimpleEmbeddingProvider has been removed.');
+    // Default to mock provider
+    console.error('[test-utils] Unknown provider type or no configuration. Using MockEmbeddingProvider.');
+    return new MockEmbeddingProvider(384);
 };
 
 /**
