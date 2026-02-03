@@ -16,23 +16,6 @@ import {
     withTempDir
 } from '../../__tests__/test-utils.js';
 
-// Test data
-const testChunks: Array<Omit<ChunkV1, 'created_at'>> = [
-    createTestChunk('chunk1', 'doc1', 'This is a test document about artificial intelligence.', createTestEmbedding(1)),
-    createTestChunk('chunk2', 'doc1', 'Machine learning is a subset of AI.', createTestEmbedding(2)),
-    createTestChunk('chunk3', 'doc2', 'Natural language processing is important.', createTestEmbedding(3)),
-    createTestChunk('chunk4', 'doc2', 'Vector databases enable efficient similarity search.', createTestEmbedding(4)),
-    createTestChunk('chunk5', 'doc3', 'Embeddings represent text as numerical vectors.', createTestEmbedding(5))
-];
-
-const testCodeBlocks: Array<Omit<CodeBlockV1, 'created_at'>> = [
-    createTestCodeBlock('cb1', 'doc1', 'block-1', 'javascript', 'const x = 1;\nconsole.log(x);', createTestEmbedding(10)),
-    createTestCodeBlock('cb2', 'doc1', 'block-1', 'python', 'x = 1\nprint(x)', createTestEmbedding(11)),
-    createTestCodeBlock('cb3', 'doc1', 'block-2', 'typescript', 'const x: number = 1;\nconsole.log(x);', createTestEmbedding(12)),
-    createTestCodeBlock('cb4', 'doc2', 'block-3', 'python', 'def hello():\n    print("Hello")', createTestEmbedding(13)),
-    createTestCodeBlock('cb5', 'doc2', 'block-4', 'javascript', 'function hello() {\n    console.log("Hello");\n}', createTestEmbedding(14))
-];
-
 describe('Vector Database Unit Tests', () => {
     let lanceDbAvailable: boolean;
 
@@ -41,6 +24,22 @@ describe('Vector Database Unit Tests', () => {
     });
 
     const testEmbeddingDim = 384;
+    // Test data
+    const testChunks: Array<Omit<ChunkV1, 'created_at'>> = [
+        createTestChunk('chunk1', 'doc1', 'This is a test document about artificial intelligence.', createTestEmbedding(1, testEmbeddingDim)),
+        createTestChunk('chunk2', 'doc1', 'Machine learning is a subset of AI.', createTestEmbedding(2, testEmbeddingDim)),
+        createTestChunk('chunk3', 'doc2', 'Natural language processing is important.', createTestEmbedding(3, testEmbeddingDim)),
+        createTestChunk('chunk4', 'doc2', 'Vector databases enable efficient similarity search.', createTestEmbedding(4, testEmbeddingDim)),
+        createTestChunk('chunk5', 'doc3', 'Embeddings represent text as numerical vectors.', createTestEmbedding(5, testEmbeddingDim))
+    ];
+
+    const testCodeBlocks: Array<Omit<CodeBlockV1, 'created_at'>> = [
+        createTestCodeBlock('cb1', 'doc1', 'block-1', 'javascript', 'const x = 1;\nconsole.log(x);', createTestEmbedding(10, testEmbeddingDim)),
+        createTestCodeBlock('cb2', 'doc1', 'block-1', 'python', 'x = 1\nprint(x)', createTestEmbedding(11, testEmbeddingDim)),
+        createTestCodeBlock('cb3', 'doc1', 'block-2', 'typescript', 'const x: number = 1;\nconsole.log(x);', createTestEmbedding(12, testEmbeddingDim)),
+        createTestCodeBlock('cb4', 'doc2', 'block-3', 'python', 'def hello():\n    print("Hello")', createTestEmbedding(13, testEmbeddingDim)),
+        createTestCodeBlock('cb5', 'doc2', 'block-4', 'javascript', 'function hello() {\n    console.log("Hello");\n}', createTestEmbedding(14, testEmbeddingDim))
+    ];
 
     describe('LanceDBV1', () => {
         it('should initialize and add chunks', async () => {
@@ -93,7 +92,7 @@ describe('Vector Database Unit Tests', () => {
                 await lanceDB.initialize();
                 
                 await lanceDB.addChunks(testChunks);
-                const results = await lanceDB.search(createTestEmbedding(1), 2);
+                const results = await lanceDB.search(createTestEmbedding(1, testEmbeddingDim), 2);
                 expect(results.length).toBeGreaterThan(0);
                 expect(results.every(r => r.score >= 0 && r.score <= 1)).toBe(true);
                 
@@ -111,7 +110,7 @@ describe('Vector Database Unit Tests', () => {
                 await lanceDB.initialize();
                 
                 await lanceDB.addChunks(testChunks);
-                const filteredResults = await lanceDB.search(createTestEmbedding(1), 5, "document_id = 'doc2'");
+                const filteredResults = await lanceDB.search(createTestEmbedding(1, testEmbeddingDim), 5, "document_id = 'doc2'");
                 expect(filteredResults.every(r => r.chunk.document_id === 'doc2')).toBe(true);
                 
                 await lanceDB.close();
@@ -143,7 +142,7 @@ describe('Vector Database Unit Tests', () => {
                 return;
             }
 
-            await withEnv({ MCP_EMBEDDING_DIM: String(testEmbeddingDim) }, async () => {
+            await withEnv({ MCP_EMBEDDING_DIMENSION: String(testEmbeddingDim) }, async () => {
                 await withTempDir('factory-test-', async (tempDir) => {
                     const lanceDB = createVectorDatabase(tempDir);
                     expect(lanceDB).toBeInstanceOf(LanceDBV1);
@@ -157,7 +156,7 @@ describe('Vector Database Unit Tests', () => {
                 return;
             }
 
-            await withEnv({ MCP_EMBEDDING_DIM: String(testEmbeddingDim) }, async () => {
+            await withEnv({ MCP_EMBEDDING_DIMENSION: String(testEmbeddingDim) }, async () => {
                 const defaultDB = createVectorDatabase();
                 expect(defaultDB).toBeInstanceOf(LanceDBV1);
                 await defaultDB.close();
@@ -169,7 +168,7 @@ describe('Vector Database Unit Tests', () => {
                 return;
             }
 
-            await withEnv({ MCP_EMBEDDING_DIM: String(testEmbeddingDim) }, async () => {
+            await withEnv({ MCP_EMBEDDING_DIMENSION: String(testEmbeddingDim) }, async () => {
                 await withTempDir('factory-test-', async (tempDir) => {
                     const lanceDB = createVectorDatabase(tempDir);
                     await lanceDB.initialize();
@@ -220,7 +219,7 @@ describe('Vector Database Unit Tests', () => {
                 const lanceDB = new LanceDBV1(tempDir, { embeddingDim: testEmbeddingDim });
                 await lanceDB.initialize();
                 
-                const emptyResults = await lanceDB.search(createTestEmbedding(1), 5);
+                const emptyResults = await lanceDB.search(createTestEmbedding(1, testEmbeddingDim), 5);
                 expect(emptyResults.length).toBe(0);
                 
                 await lanceDB.close();
@@ -238,7 +237,7 @@ describe('Vector Database Unit Tests', () => {
                 
                 const chunkWithoutEmbedding = createTestChunk('no-embed', 'doc1', 'No embedding here');
                 await lanceDB.addChunks([chunkWithoutEmbedding, testChunks[0]]);
-                const results = await lanceDB.search(createTestEmbedding(1), 5);
+                const results = await lanceDB.search(createTestEmbedding(1, testEmbeddingDim), 5);
                 expect(results.length).toBe(1);
                 
                 await lanceDB.close();
@@ -258,7 +257,7 @@ describe('Vector Database Unit Tests', () => {
                 const doc1CodeBlocks = await lanceDB.getCodeBlocksByDocument('doc1');
                 expect(doc1CodeBlocks.length).toBe(3);
                 expect(doc1CodeBlocks.every(cb => cb.document_id === 'doc1')).toBe(true);
-            }, 'codeblock-test-');
+            }, 'codeblock-test-', testEmbeddingDim);
         });
 
         it('should sort code blocks by block_index', async () => {
@@ -273,7 +272,7 @@ describe('Vector Database Unit Tests', () => {
                 for (let i = 0; i < doc1CodeBlocks.length - 1; i++) {
                     expect(doc1CodeBlocks[i].block_index).toBeLessThanOrEqual(doc1CodeBlocks[i + 1].block_index);
                 }
-            }, 'codeblock-test-');
+            }, 'codeblock-test-', testEmbeddingDim);
         });
 
         it('should have normalized language tags', async () => {
@@ -289,7 +288,7 @@ describe('Vector Database Unit Tests', () => {
                 expect(jsBlock).toBeDefined();
                 const tsBlock = doc1CodeBlocks.find(cb => cb.language === 'typescript');
                 expect(tsBlock).toBeDefined();
-            }, 'codeblock-test-');
+            }, 'codeblock-test-', testEmbeddingDim);
         });
     });
 
@@ -302,10 +301,10 @@ describe('Vector Database Unit Tests', () => {
             await withVectorDb(async (lanceDB) => {
                 await lanceDB.addCodeBlocks(testCodeBlocks);
 
-                const allResults = await lanceDB.searchCodeBlocks(createTestEmbedding(10), 10);
+                const allResults = await lanceDB.searchCodeBlocks(createTestEmbedding(10, testEmbeddingDim), 10);
                 expect(allResults.length).toBeGreaterThan(0);
                 expect(allResults.every(r => r.score >= 0 && r.score <= 1)).toBe(true);
-            }, 'codeblock-search-test-');
+            }, 'codeblock-search-test-', testEmbeddingDim);
         });
 
         it('should search with language filter for javascript', async () => {
@@ -316,9 +315,9 @@ describe('Vector Database Unit Tests', () => {
             await withVectorDb(async (lanceDB) => {
                 await lanceDB.addCodeBlocks(testCodeBlocks);
 
-                const jsResults = await lanceDB.searchCodeBlocks(createTestEmbedding(10), 10, 'javascript');
+                const jsResults = await lanceDB.searchCodeBlocks(createTestEmbedding(10, testEmbeddingDim), 10, 'javascript');
                 expect(jsResults.every(r => r.code_block.language === 'javascript')).toBe(true);
-            }, 'codeblock-search-test-');
+            }, 'codeblock-search-test-', testEmbeddingDim);
         });
 
         it('should search with language filter for python', async () => {
@@ -329,9 +328,9 @@ describe('Vector Database Unit Tests', () => {
             await withVectorDb(async (lanceDB) => {
                 await lanceDB.addCodeBlocks(testCodeBlocks);
 
-                const pythonResults = await lanceDB.searchCodeBlocks(createTestEmbedding(10), 10, 'python');
+                const pythonResults = await lanceDB.searchCodeBlocks(createTestEmbedding(10, testEmbeddingDim), 10, 'python');
                 expect(pythonResults.every(r => r.code_block.language === 'python')).toBe(true);
-            }, 'codeblock-search-test-');
+            }, 'codeblock-search-test-', testEmbeddingDim);
         });
 
         it('should handle case-insensitive language matching', async () => {
@@ -342,9 +341,9 @@ describe('Vector Database Unit Tests', () => {
             await withVectorDb(async (lanceDB) => {
                 await lanceDB.addCodeBlocks(testCodeBlocks);
 
-                const jsResultsUpperCase = await lanceDB.searchCodeBlocks(createTestEmbedding(10), 10, 'JavaScript');
+                const jsResultsUpperCase = await lanceDB.searchCodeBlocks(createTestEmbedding(10, testEmbeddingDim), 10, 'JavaScript');
                 expect(jsResultsUpperCase.every(r => r.code_block.language === 'javascript')).toBe(true);
-            }, 'codeblock-search-test-');
+            }, 'codeblock-search-test-', testEmbeddingDim);
         });
 
         it('should return empty results for non-existent language', async () => {
@@ -355,9 +354,9 @@ describe('Vector Database Unit Tests', () => {
             await withVectorDb(async (lanceDB) => {
                 await lanceDB.addCodeBlocks(testCodeBlocks);
 
-                const emptyResults = await lanceDB.searchCodeBlocks(createTestEmbedding(10), 10, 'rust');
+                const emptyResults = await lanceDB.searchCodeBlocks(createTestEmbedding(10, testEmbeddingDim), 10, 'rust');
                 expect(emptyResults.length).toBe(0);
-            }, 'codeblock-search-test-');
+            }, 'codeblock-search-test-', testEmbeddingDim);
         });
     });
 
@@ -369,9 +368,9 @@ describe('Vector Database Unit Tests', () => {
 
             await withVectorDb(async (lanceDB) => {
                 const multiLangBlocks: Array<Omit<CodeBlockV1, 'created_at'>> = [
-                    createTestCodeBlock('ml1', 'doc1', 'tabbed-1', 'javascript', 'const x = 1;', createTestEmbedding(20)),
-                    createTestCodeBlock('ml2', 'doc1', 'tabbed-1', 'python', 'x = 1', createTestEmbedding(21)),
-                    createTestCodeBlock('ml3', 'doc1', 'tabbed-1', 'typescript', 'const x: number = 1;', createTestEmbedding(22)),
+                    createTestCodeBlock('ml1', 'doc1', 'tabbed-1', 'javascript', 'const x = 1;', createTestEmbedding(20, testEmbeddingDim)),
+                    createTestCodeBlock('ml2', 'doc1', 'tabbed-1', 'python', 'x = 1', createTestEmbedding(21, testEmbeddingDim)),
+                    createTestCodeBlock('ml3', 'doc1', 'tabbed-1', 'typescript', 'const x: number = 1;', createTestEmbedding(22, testEmbeddingDim)),
                 ];
 
                 await lanceDB.addCodeBlocks(multiLangBlocks);
@@ -393,7 +392,7 @@ describe('Vector Database Unit Tests', () => {
                 expect(languages).toContain('javascript');
                 expect(languages).toContain('python');
                 expect(languages).toContain('typescript');
-            }, 'codeblock-multilang-test-');
+            }, 'codeblock-multilang-test-', testEmbeddingDim);
         });
 
         it('should return variants in search results', async () => {
@@ -403,17 +402,17 @@ describe('Vector Database Unit Tests', () => {
 
             await withVectorDb(async (lanceDB) => {
                 const multiLangBlocks: Array<Omit<CodeBlockV1, 'created_at'>> = [
-                    createTestCodeBlock('ml1', 'doc1', 'tabbed-1', 'javascript', 'const x = 1;', createTestEmbedding(20)),
-                    createTestCodeBlock('ml2', 'doc1', 'tabbed-1', 'python', 'x = 1', createTestEmbedding(21)),
-                    createTestCodeBlock('ml3', 'doc1', 'tabbed-1', 'typescript', 'const x: number = 1;', createTestEmbedding(22)),
+                    createTestCodeBlock('ml1', 'doc1', 'tabbed-1', 'javascript', 'const x = 1;', createTestEmbedding(20, testEmbeddingDim)),
+                    createTestCodeBlock('ml2', 'doc1', 'tabbed-1', 'python', 'x = 1', createTestEmbedding(21, testEmbeddingDim)),
+                    createTestCodeBlock('ml3', 'doc1', 'tabbed-1', 'typescript', 'const x: number = 1;', createTestEmbedding(22, testEmbeddingDim)),
                 ];
 
                 await lanceDB.addCodeBlocks(multiLangBlocks);
 
-                const searchResults = await lanceDB.searchCodeBlocks(createTestEmbedding(20), 10);
+                const searchResults = await lanceDB.searchCodeBlocks(createTestEmbedding(20, testEmbeddingDim), 10);
                 const tabbedBlockResults = searchResults.filter(r => r.code_block.block_id === 'tabbed-1');
                 expect(tabbedBlockResults.length).toBeGreaterThan(0);
-            }, 'codeblock-multilang-test-');
+            }, 'codeblock-multilang-test-', testEmbeddingDim);
         });
     });
 });

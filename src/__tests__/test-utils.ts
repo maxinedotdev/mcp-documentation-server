@@ -151,10 +151,12 @@ export async function warmupEmbeddingProvider(): Promise<void> {
 
 export const withVectorDb = async <T>(
     fn: (vectorDb: LanceDBV1) => Promise<T> | T,
-    prefix: string = 'vector-test-'
+    prefix: string = 'vector-test-',
+    embeddingDimOverride?: number
 ): Promise<T> => {
-    const embeddingDim = process.env.MCP_EMBEDDING_DIMENSION ?? process.env.MCP_EMBEDDING_DIM ?? '384';
-    return withEnv({ MCP_EMBEDDING_DIMENSION: embeddingDim, MCP_EMBEDDING_DIM: embeddingDim }, async () => {
+    const resolvedDim = embeddingDimOverride ?? process.env.MCP_EMBEDDING_DIMENSION ?? '384';
+    const embeddingDim = String(resolvedDim);
+    return withEnv({ MCP_EMBEDDING_DIMENSION: embeddingDim }, async () => {
         const dir = createTempDir(prefix);
         const vectorDb = new LanceDBV1(dir);
         await vectorDb.initialize();
@@ -193,8 +195,8 @@ export const withBaseDirAndDocumentManager = async <T>(
 ): Promise<T> => {
     return withBaseDir(basePrefix, async (baseDir) => {
         const embeddingProvider = options.embeddingProvider ?? createTestEmbeddingProvider();
-        const embeddingDim = process.env.MCP_EMBEDDING_DIMENSION ?? process.env.MCP_EMBEDDING_DIM ?? '384';
-        return withEnv({ MCP_EMBEDDING_DIMENSION: embeddingDim, MCP_EMBEDDING_DIM: embeddingDim }, async () => {
+        const embeddingDim = process.env.MCP_EMBEDDING_DIMENSION ?? '384';
+        return withEnv({ MCP_EMBEDDING_DIMENSION: embeddingDim }, async () => {
             const vectorDbPath = path.join(baseDir, 'lancedb');
             const vectorDb = new LanceDBV1(vectorDbPath);
             await vectorDb.initialize();
@@ -256,7 +258,7 @@ export const addDocumentsRange = async (
 };
 
 export const createTestEmbedding = (seed: number, dimensions?: number): number[] => {
-    const resolvedDim = dimensions ?? parseInt(process.env.MCP_EMBEDDING_DIMENSION ?? process.env.MCP_EMBEDDING_DIM ?? '384', 10);
+    const resolvedDim = dimensions ?? parseInt(process.env.MCP_EMBEDDING_DIMENSION ?? '384', 10);
     const embedding: number[] = [];
     for (let i = 0; i < resolvedDim; i++) {
         const value = Math.sin(seed * i * 0.1) * Math.cos(seed * i * 0.05);
