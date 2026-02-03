@@ -1,5 +1,11 @@
 # Saga v1.0.0 Database Migration Guide
 
+> **Legacy notice**: Saga v1 is migrationless. For current deployments, delete
+> `~/.saga/lancedb` and re-ingest your documents. This guide is retained for
+> historical reference only and is **not** part of the supported v1 workflow.
+> Legacy data (pre-v1) lives under `~/.saga/vector-db`. Any v1 data lives under
+> `~/.saga/lancedb`.
+
 This guide provides comprehensive instructions for migrating from the legacy database schema to the new Saga v1.0.0 schema with flattened metadata, normalized tables, and LanceDB as the single source of truth.
 
 ## Table of Contents

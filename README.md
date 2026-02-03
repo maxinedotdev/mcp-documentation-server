@@ -34,8 +34,8 @@ If you prefer not to use `npm link`, you can reference the server directly in yo
       "env": {
         "MCP_BASE_DIR": "~/.saga",
         "MCP_EMBEDDING_PROVIDER": "openai",
-        "MCP_EMBEDDING_BASE_URL": "http://127.0.0.1:1234",
-        "MCP_EMBEDDING_MODEL": "text-embedding-multilingual-e5-large-instruct"
+        "MCP_EMBEDDING_BASE_URL": "http://localhost:1234",
+        "MCP_EMBEDDING_MODEL": "llama-nemotron-embed-1b-v2"
       }
     }
   }
@@ -64,8 +64,8 @@ Add to your MCP client configuration (e.g., Claude Desktop):
       "env": {
         "MCP_BASE_DIR": "~/.saga",
         "MCP_EMBEDDING_PROVIDER": "openai",
-        "MCP_EMBEDDING_BASE_URL": "http://127.0.0.1:1234",
-        "MCP_EMBEDDING_MODEL": "text-embedding-multilingual-e5-large-instruct"
+        "MCP_EMBEDDING_BASE_URL": "http://localhost:1234",
+        "MCP_EMBEDDING_MODEL": "llama-nemotron-embed-1b-v2"
       }
     }
   }
@@ -116,7 +116,7 @@ Saga now uses a redesigned v1.0.0 database schema with significant improvements 
 | **Indexes** | Dynamic IVF_PQ, scalar indexes | Fast queries, scalable |
 | **Storage** | Single source of truth (LanceDB only) | No duplication, consistency |
 | **Memory** | Optional LRU caches | Scalable, configurable |
-| **Migration** | Batch processing, rollback plan | Safe migration |
+| **Migration** | Migrationless (manual reset) | Clear state, no legacy coupling |
 | **Performance** | <100ms query latency | Better UX |
 
 ### Quick Start
@@ -130,30 +130,18 @@ For new installations, the v1.0.0 schema is initialized automatically:
 saga
 ```
 
-#### Migration from Legacy Schema
+#### Legacy Data (No Migration)
 
-If you have an existing database, migrate to v1.0.0:
+Saga v1 is **migrationless**. If you have legacy data, discard it and re-ingest.
+There is no backward compatibility, and the server will prompt you to manually
+delete the database when it detects a schema mismatch.
 
 ```bash
-# Run migration with backup
-node dist/scripts/migrate-to-v1.ts --backup --verbose
-
-# Or use a custom batch size for large datasets
-node dist/scripts/migrate-to-v1.ts --batch-size 2000 --verbose
+rm -rf ~/.saga/lancedb
 ```
 
-**Migration Steps:**
-
-1. **Backup**: Automatic backup created before migration
-2. **Schema Creation**: New tables and indexes created
-3. **Data Migration**: Documents, chunks, code blocks migrated
-4. **Index Building**: Scalar and vector indexes created
-5. **Validation**: Data integrity verified
-
-**Estimated Migration Time:**
-- < 10K documents: < 5 minutes
-- 10K - 100K documents: 10-20 minutes
-- 100K - 1M documents: 30-60 minutes
+If you still want to attempt a legacy migration, see
+`docs/database-v1-migration-guide.md` (deprecated).
 
 ### Performance Targets
 
@@ -168,19 +156,19 @@ node dist/scripts/migrate-to-v1.ts --batch-size 2000 --verbose
 ### Storage Layout
 
 ```
-~/.saga/vector-db/
-├── documents/              # Document metadata
-├── document_tags/          # Tag relationships
-├── document_languages/     # Language relationships
-├── chunks/                 # Text chunks with embeddings
-├── code_blocks/            # Code blocks with embeddings
-├── keywords/               # Keyword inverted index
-└── schema_version/         # Migration tracking
+~/.saga/lancedb/
+├── documents.lance/         # Document metadata
+├── document_tags.lance/     # Tag relationships
+├── document_languages.lance/# Language relationships
+├── chunks.lance/            # Text chunks with embeddings
+├── code_blocks.lance/       # Code blocks with embeddings
+├── keywords.lance/          # Keyword inverted index
+└── schema_version.lance/    # Schema tracking
 ```
 
 ### Documentation
 
-- **[Migration Guide](docs/database-v1-migration-guide.md)** - Complete migration instructions
+- **[Migration Guide (Legacy)](docs/database-v1-migration-guide.md)** - Deprecated legacy migration notes
 - **[Schema Reference](docs/database-v1-schema-reference.md)** - Complete schema documentation
 - **[API Reference](docs/database-v1-api-reference.md)** - LanceDBV1 API documentation
 - **[Design Document](plans/database-schema-v1-design.md)** - Detailed design rationale
@@ -210,33 +198,26 @@ node dist/scripts/drop-db.ts
 
 ### Troubleshooting
 
-#### Migration Issues
+#### Schema/Initialization Issues
 
-**Symptom**: Migration fails or hangs
-
-**Solutions**:
-1. Check disk space (need 3x current database size)
-2. Reduce batch size: `--batch-size 500`
-3. Skip index creation: `--skip-indexes`
-4. Run dry run first: `--dry-run`
-
-**Symptom**: Validation fails after migration
+**Symptom**: Startup error mentions schema mismatch or missing tables.
 
 **Solutions**:
-1. Check migration logs for errors
-2. Verify backup was created
-3. Restore from backup if needed
-4. Re-run migration with verbose logging
+1. Stop the server
+2. Delete the database directory:
+   ```bash
+   rm -rf ~/.saga/lancedb
+   ```
+3. Restart the server and re-ingest documents
 
 #### Performance Issues
 
-**Symptom**: Slow queries after migration
+**Symptom**: Slow queries
 
 **Solutions**:
-1. Verify vector indexes were created
-2. Check database stats: `node dist/scripts/db-status.ts`
-3. Rebuild indexes if needed
-4. Reduce result limit for faster queries
+1. Check database stats: `node dist/scripts/db-status.ts`
+2. Reduce result limit for faster queries
+3. Monitor with `node dist/scripts/benchmark-db.ts`
 
 **Symptom**: High memory usage
 
@@ -244,21 +225,6 @@ node dist/scripts/drop-db.ts
 1. Use pagination for large result sets
 2. Reduce batch size for inserts
 3. Close database connections when done
-4. Monitor with `node dist/scripts/benchmark-db.ts`
-
-### Rollback
-
-If migration fails or issues occur:
-
-```bash
-# Restore from backup
-BACKUP_PATH=~/.saga/vector-db.backup.*
-rm -rf ~/.saga/vector-db
-cp -r $BACKUP_PATH ~/.saga/vector-db
-
-# Verify restoration
-node dist/scripts/db-status.ts
-```
 
 ## Available Tools
 
@@ -288,13 +254,13 @@ Configure via environment variables:
 |----------|-------------|---------|
 | `MCP_BASE_DIR` | Data storage directory | `~/.saga` |
 | `MCP_EMBEDDING_PROVIDER` | `openai` (OpenAI-compatible API only) | `openai` |
-| `MCP_EMBEDDING_MODEL` | Embedding model name | `text-embedding-multilingual-e5-large-instruct` |
+| `MCP_EMBEDDING_MODEL` | Embedding model name | `llama-nemotron-embed-1b-v2` |
 | `MCP_EMBEDDING_BASE_URL` | OpenAI-compatible base URL (required) | - |
 | `MCP_AI_BASE_URL` | LLM provider URL (LM Studio/synthetic.new) | - |
 | `MCP_AI_MODEL` | LLM model name | Provider default |
 | `MCP_AI_API_KEY` | API key for remote providers | - |
 | `MCP_TAG_GENERATION_ENABLED` | Auto-generate tags with AI | `false` |
-| `MCP_SIMILARITY_THRESHOLD` | Min similarity score (0.0-1.0) | `0.3` |
+| `MCP_SIMILARITY_THRESHOLD` | Min similarity score (0.0-1.0) | `0.0` |
 
 ### Reranking Configuration
 
@@ -384,7 +350,7 @@ MCP_EMBEDDING_TIMEOUT_MS=45000      # 45s for embeddings
 
 **LM Studio (local)**:
 ```env
-MCP_AI_BASE_URL=http://127.0.0.1:1234
+MCP_AI_BASE_URL=http://localhost:1234
 MCP_AI_MODEL=ministral-3-8b-instruct-2512
 ```
 
@@ -409,9 +375,9 @@ MCP_AI_API_KEY=your-api-key
 1. **Clear LanceDB data**: `rm -rf ~/.saga/lancedb/`
 2. **Verify embedding endpoint**:
    ```bash
-   curl http://127.0.0.1:1234/v1/embeddings \
+   curl http://localhost:1234/v1/embeddings \
      -H "Content-Type: application/json" \
-     -d '{"input": ["test"], "model": "text-embedding-multilingual-e5-large-instruct"}'
+     -d '{"input": ["test"], "model": "llama-nemotron-embed-1b-v2"}'
    ```
 3. **Check VS Code MCP logs**: Open Output panel → Select "MCP Documentation Server"
 4. **Restart VS Code** after applying fixes
@@ -437,8 +403,8 @@ Unexpected endpoint or method. (HEAD /). Returning 200 anyway
          "env": {
            "MCP_BASE_DIR": "~/.saga",
            "MCP_EMBEDDING_PROVIDER": "openai",
-           "MCP_EMBEDDING_BASE_URL": "http://127.0.0.1:1234",
-           "MCP_EMBEDDING_MODEL": "text-embedding-multilingual-e5-large-instruct"
+           "MCP_EMBEDDING_BASE_URL": "http://localhost:1234",
+           "MCP_EMBEDDING_MODEL": "llama-nemotron-embed-1b-v2"
          }
        }
      }
@@ -500,7 +466,7 @@ If the vector database fails to initialize, the server will continue running wit
 **Symptom**: LM Studio shows an error when Saga tries to use embeddings:
 
 ```
-Invalid model identifier 'text-embedding-multilingual-e5-large-instruct'. No matching loaded model found, and just-in-time (JIT) model loading is disabled. Ensure you have this model loaded first. JIT loading can be enabled in LM Studio Server Settings.
+Invalid model identifier 'llama-nemotron-embed-1b-v2'. No matching loaded model found, and just-in-time (JIT) model loading is disabled. Ensure you have this model loaded first. JIT loading can be enabled in LM Studio Server Settings.
 ```
 
 **Cause**: LM Studio has Just-In-Time (JIT) model loading disabled, which requires models to be pre-loaded before use. Saga requests the embedding model by name, but LM Studio cannot automatically load it because JIT loading is turned off.
@@ -531,11 +497,11 @@ If you prefer to keep JIT loading disabled, manually load the model first:
 
 1. **Open LM Studio**
 2. **Download the embedding model**:
-   - Search for "text-embedding-multilingual-e5-large-instruct" in the model marketplace
+   - Search for "llama-nemotron-embed-1b-v2" in the model marketplace
    - Download and install the model
 3. **Load the model**:
    - Go to the "Local Models" tab
-   - Find "text-embedding-multilingual-e5-large-instruct"
+   - Find "llama-nemotron-embed-1b-v2"
    - Click "Load" or "Start" to load the model into memory
 4. **Keep the model loaded**:
    - Ensure the model remains loaded while using Saga
@@ -566,20 +532,20 @@ For the best experience with Saga, configure LM Studio with these settings:
 
 1. **Check if the model is installed**:
    - In LM Studio, go to "Local Models"
-   - Search for "text-embedding-multilingual-e5-large-instruct"
+   - Search for "llama-nemotron-embed-1b-v2"
    - If not found, download it from the marketplace
 
 2. **Verify LM Studio server is running**:
    ```bash
-   curl http://127.0.0.1:1234/v1/models
+   curl http://localhost:1234/v1/models
    ```
    You should see a list of available models including the embedding model.
 
 3. **Test the embedding endpoint directly**:
    ```bash
-   curl http://127.0.0.1:1234/v1/embeddings \
+   curl http://localhost:1234/v1/embeddings \
      -H "Content-Type: application/json" \
-     -d '{"input": ["test"], "model": "text-embedding-multilingual-e5-large-instruct"}'
+     -d '{"input": ["test"], "model": "llama-nemotron-embed-1b-v2"}'
    ```
 
 4. **Check LM Studio logs**:

@@ -53,8 +53,8 @@ import { LanceDBV1 } from './src/vector-db/lance-db-v1.js';
 
 ```typescript
 // Create database instance
-const db = new LanceDBV1('~/.saga/vector-db', {
-    embeddingDim: 1536
+const db = new LanceDBV1('~/.saga/lancedb', {
+    embeddingDim: 2048
 });
 
 // Initialize database
@@ -102,16 +102,16 @@ Creates a new LanceDBV1 instance.
 |-----------|------|----------|---------|-------------|
 | `dbPath` | `string` | Yes | - | Path to the LanceDB database directory |
 | `options` | `object` | No | `{}` | Configuration options |
-| `options.embeddingDim` | `number` | No | `1536` | Embedding vector dimension |
+| `options.embeddingDim` | `number` | No | `2048` | Embedding vector dimension |
 
 #### Example
 
 ```typescript
 // Default configuration
-const db = new LanceDBV1('~/.saga/vector-db');
+const db = new LanceDBV1('~/.saga/lancedb');
 
 // Custom embedding dimension
-const db = new LanceDBV1('~/.saga/vector-db', {
+const db = new LanceDBV1('~/.saga/lancedb', {
     embeddingDim: 768  // For smaller models
 });
 
@@ -123,7 +123,7 @@ const db = new LanceDBV1('/custom/path/to/database');
 
 - The `dbPath` directory will be created if it doesn't exist
 - `embeddingDim` should match your embedding model's output dimension
-- Common values: 1536 (OpenAI), 768 (BERT), 384 (smaller models)
+- Common values: 2048 (llama-nemotron-embed-1b-v2), 1536 (OpenAI), 768 (BERT), 384 (smaller models)
 
 ---
 
@@ -144,7 +144,7 @@ Initializes the database connection and schema. Creates tables and indexes if th
 #### Example
 
 ```typescript
-const db = new LanceDBV1('~/.saga/vector-db');
+const db = new LanceDBV1('~/.saga/lancedb');
 
 try {
     await db.initialize();
@@ -180,7 +180,7 @@ Checks if the database has been initialized.
 #### Example
 
 ```typescript
-const db = new LanceDBV1('~/.saga/vector-db');
+const db = new LanceDBV1('~/.saga/lancedb');
 
 if (!db.isInitialized()) {
     await db.initialize();
@@ -872,7 +872,7 @@ Write operations (`addDocument`, `addChunks`, `addCodeBlocks`, `deleteDocument`)
 #### 1. Always Initialize First
 
 ```typescript
-const db = new LanceDBV1('~/.saga/vector-db');
+const db = new LanceDBV1('~/.saga/lancedb');
 await db.initialize();  // Always call before other operations
 ```
 
@@ -1037,7 +1037,7 @@ for (let i = 0; i < allChunks.length; i += 1000) {
 #### 2. Close Connections When Done
 
 ```typescript
-const db = new LanceDBV1('~/.saga/vector-db');
+const db = new LanceDBV1('~/.saga/lancedb');
 try {
     await db.initialize();
     // Use database
@@ -1262,7 +1262,7 @@ interface DatabaseStats {
 
 ## Additional Resources
 
-- [Migration Guide](./database-v1-migration-guide.md) - Complete migration instructions
+- [Migration Guide (Legacy)](./database-v1-migration-guide.md) - Deprecated migration notes
 - [Schema Reference](./database-v1-schema-reference.md) - Complete schema documentation
 - [Design Document](../plans/database-schema-v1-design.md) - Detailed design rationale
 - [Type Definitions](../src/types/database-v1.ts) - TypeScript type definitions

@@ -30,14 +30,14 @@ The v1.0.0 schema follows these design principles:
 ### Storage Layout
 
 ```
-~/.saga/vector-db/
-├── documents/              # Document metadata
-├── document_tags/          # Tag relationships
-├── document_languages/     # Language relationships
-├── chunks/                 # Text chunks with embeddings
-├── code_blocks/            # Code blocks with embeddings
-├── keywords/               # Keyword inverted index
-└── schema_version/         # Migration tracking
+~/.saga/lancedb/
+├── documents.lance/         # Document metadata
+├── document_tags.lance/     # Tag relationships
+├── document_languages.lance/ # Language relationships
+├── chunks.lance/            # Text chunks with embeddings
+├── code_blocks.lance/       # Code blocks with embeddings
+├── keywords.lance/          # Keyword inverted index
+└── schema_version.lance/    # Schema compatibility tracking
 ```
 
 ### Schema Version
@@ -392,7 +392,7 @@ Inverted index for keyword search. Replaces in-memory keyword index.
 
 ### Table: `schema_version`
 
-Tracks schema version for migration management.
+Tracks schema version for compatibility checks (Saga v1 is migrationless).
 
 #### Columns
 
@@ -535,7 +535,7 @@ const indexCreationOrder = [
 ```typescript
 import { LanceDBV1 } from './src/vector-db/lance-db-v1.js';
 
-const db = new LanceDBV1('~/.saga/vector-db');
+const db = new LanceDBV1('~/.saga/lancedb');
 await db.initialize();
 
 // Query by vector embedding
@@ -1006,7 +1006,7 @@ const timestamp = new Date().toISOString();
 
 ## Additional Resources
 
-- [Migration Guide](./database-v1-migration-guide.md) - Complete migration instructions
+- [Migration Guide (Legacy)](./database-v1-migration-guide.md) - Deprecated migration notes
 - [API Reference](./database-v1-api-reference.md) - LanceDBV1 API documentation
 - [Design Document](../plans/database-schema-v1-design.md) - Detailed design rationale
 - [Type Definitions](../src/types/database-v1.ts) - TypeScript type definitions
