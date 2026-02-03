@@ -71,7 +71,7 @@ describe('Language Detection', () => {
             }, async () => {
                 const accepted = getAcceptedLanguages();
                 expect(accepted).toBeDefined();
-                expect(accepted?.length).toBe(3);
+                expect(accepted.length).toBe(3);
                 expect(accepted).toContain('en');
                 expect(accepted).toContain('es');
                 expect(accepted).toContain('fr');
@@ -104,6 +104,28 @@ describe('Language Detection', () => {
                 const defaultQuery = getDefaultQueryLanguages();
                 expect(defaultQuery).toContain('de');
                 expect(defaultQuery).toContain('it');
+            });
+        });
+
+        it('should default accepted languages to en,no when unset', async () => {
+            await withEnv({
+                MCP_ACCEPTED_LANGUAGES: undefined,
+                MCP_DEFAULT_QUERY_LANGUAGES: undefined,
+            }, async () => {
+                const accepted = getAcceptedLanguages();
+                expect(accepted).toContain('en');
+                expect(accepted).toContain('no');
+            });
+        });
+
+        it('should default query languages to en,no when unset', async () => {
+            await withEnv({
+                MCP_ACCEPTED_LANGUAGES: undefined,
+                MCP_DEFAULT_QUERY_LANGUAGES: undefined,
+            }, async () => {
+                const defaultQuery = getDefaultQueryLanguages();
+                expect(defaultQuery).toContain('en');
+                expect(defaultQuery).toContain('no');
             });
         });
 

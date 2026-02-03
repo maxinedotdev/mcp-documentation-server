@@ -222,9 +222,9 @@ export function getEmbeddingBatchSize(): number {
 
 /**
  * Default embedding dimension
- * Current model (text-embedding-llama-embed-nemotron-8b) produces 4096 dimensions
+ * Current model (llama-nemotron-embed-1b-v2) produces 2048 dimensions
  */
-const DEFAULT_EMBEDDING_DIMENSION = 4096;
+const DEFAULT_EMBEDDING_DIMENSION = 2048;
 
 /**
  * Minimum embedding dimension
@@ -240,7 +240,7 @@ const MAX_EMBEDDING_DIMENSION = 8192;
  * Get the configured embedding dimension
  * Reads from MCP_EMBEDDING_DIMENSION environment variable
  * Validates and returns a value between MIN and MAX
- * @returns Validated embedding dimension (default: 4096)
+ * @returns Validated embedding dimension (default: 2048)
  */
 export function getEmbeddingDimension(): number {
     const envValue = process.env.MCP_EMBEDDING_DIMENSION;

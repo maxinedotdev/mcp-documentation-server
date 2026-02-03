@@ -370,7 +370,7 @@ function getCachedEmbeddingProvider(createFn: () => EmbeddingProvider): Embeddin
 }
 
 const DEFAULT_LOCAL_OPENAI_BASE_URL = 'http://127.0.0.1:1234';
-const DEFAULT_OPENAI_EMBEDDING_MODEL = 'text-embedding-multilingual-e5-large-instruct';
+const DEFAULT_OPENAI_EMBEDDING_MODEL = 'llama-nemotron-embed-1b-v2';
 
 function normalizeBaseUrl(url: string): string {
     return url.replace(/\/+$/, '');

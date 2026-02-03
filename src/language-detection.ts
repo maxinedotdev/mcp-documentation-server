@@ -141,12 +141,15 @@ export function parseLanguageList(envValue: string | undefined): string[] | null
         .filter(code => code.length > 0);
 }
 
+const DEFAULT_LANGUAGES = ['en', 'no'];
+
 /**
  * Get accepted languages from environment (MCP_ACCEPTED_LANGUAGES)
- * @returns Array of accepted language codes or null if not configured
+ * Defaults to en,no when unset.
+ * @returns Array of accepted language codes
  */
-export function getAcceptedLanguages(): string[] | null {
-    return parseLanguageList(process.env.MCP_ACCEPTED_LANGUAGES);
+export function getAcceptedLanguages(): string[] {
+    return parseLanguageList(process.env.MCP_ACCEPTED_LANGUAGES) ?? DEFAULT_LANGUAGES;
 }
 
 /**
@@ -154,7 +157,7 @@ export function getAcceptedLanguages(): string[] | null {
  * Falls back to MCP_ACCEPTED_LANGUAGES if not set
  * @returns Array of default query language codes or null if not configured
  */
-export function getDefaultQueryLanguages(): string[] | null {
+export function getDefaultQueryLanguages(): string[] {
     const queryLangs = parseLanguageList(process.env.MCP_DEFAULT_QUERY_LANGUAGES);
     if (queryLangs) {
         return queryLangs;

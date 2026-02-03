@@ -4,7 +4,7 @@ import * as path from "path";
 import { glob } from "glob";
 import { createHash } from 'crypto';
 import type { Document, DocumentChunk, DocumentSummary, SearchResult, CodeBlock, EmbeddingProvider, QueryOptions, QueryResponse, DocumentDiscoveryResult, MetadataFilter, Reranker, RerankResult } from './types.js';
-import { IntelligentChunker } from './intelligent-chunker.js';
+import { LangChainChunker } from './chunking/langchain-chunker.js';
 import { extractText } from 'unpdf';
 import { getDefaultDataDir, expandHomeDir } from './utils.js';
 import { DocumentIndex } from './indexing/document-index.js';
@@ -83,7 +83,7 @@ export class DocumentManager {
     private dataDir: string;
     private uploadsDir: string;
     private embeddingProvider: EmbeddingProvider;
-    private intelligentChunker: IntelligentChunker;
+    private chunker: LangChainChunker;
     private documentIndex: DocumentIndex | null = null;
     private vectorDatabase: VectorDatabase | null = null;
     private vectorDbInitPromise: Promise<void> | null = null;
@@ -111,7 +111,7 @@ export class DocumentManager {
         console.error(`[DocumentManager] ${getTimestamp()} Uploads dir: ${this.uploadsDir}`);
 
         this.embeddingProvider = embeddingProvider;
-        this.intelligentChunker = new IntelligentChunker(this.embeddingProvider);
+        this.chunker = new LangChainChunker(this.embeddingProvider);
 
         // Feature flags with fallback
         this.useIndexing = process.env.MCP_INDEXING_ENABLED !== 'false';
@@ -514,12 +514,7 @@ export class DocumentManager {
             const envChunkSize = parseInt(process.env.MCP_CHUNK_SIZE || '-1');
             const envChunkOverlap = parseInt(process.env.MCP_CHUNK_OVERLAP || '-1');
             
-            const chunkOptions: any = {
-                adaptiveSize: true,
-                addContext: true
-            };
-
-            // Only set maxSize and overlap if environment variables are not -1
+            const chunkOptions: { maxSize?: number; overlap?: number } = {};
             if (envChunkSize > 0) {
                 chunkOptions.maxSize = envChunkSize;
             }
@@ -527,7 +522,7 @@ export class DocumentManager {
                 chunkOptions.overlap = envChunkOverlap;
             }
 
-            const chunks = await this.intelligentChunker.createChunks(id, content, chunkOptions, metadata, title);
+            const chunks = await this.chunker.createChunks(id, content, chunkOptions);
 
             // DIAGNOSTIC: Log chunk status immediately after creation
             console.error(`[DocumentManager]   Total chunks: ${chunks.length}`);
