@@ -1791,7 +1791,7 @@ export class DocumentManager {
                 }));
 
                 await this.vectorDatabase.addCodeBlocks(rows);
-                console.log(`[DocumentManager] Added ${rows.length}/${codeBlocks.length} code blocks to vector database`);
+                console.error(`[DocumentManager] Added ${rows.length}/${codeBlocks.length} code blocks to vector database`);
             } else {
                 console.warn(`[DocumentManager] No code blocks with embeddings to add`);
             }

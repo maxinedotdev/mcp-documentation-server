@@ -13,7 +13,7 @@ const eldInitPromise = (async () => {
         await loader();
     }
     eldInitialized = true;
-    console.log('[LanguageDetection] ELD dataset loaded successfully');
+    console.error('[LanguageDetection] ELD dataset loaded successfully');
 })().catch((error: unknown) => {
     console.error('[LanguageDetection] Failed to load ELD dataset:', error);
     throw error;
