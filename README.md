@@ -495,6 +495,102 @@ If the vector database fails to initialize, the server will continue running wit
 
 **Note**: Reranking gracefully degrades to vector-only search if the reranking service is unavailable or times out.
 
+### LM Studio Embedding Model Loading Error
+
+**Symptom**: LM Studio shows an error when Saga tries to use embeddings:
+
+```
+Invalid model identifier 'text-embedding-multilingual-e5-large-instruct'. No matching loaded model found, and just-in-time (JIT) model loading is disabled. Ensure you have this model loaded first. JIT loading can be enabled in LM Studio Server Settings.
+```
+
+**Cause**: LM Studio has Just-In-Time (JIT) model loading disabled, which requires models to be pre-loaded before use. Saga requests the embedding model by name, but LM Studio cannot automatically load it because JIT loading is turned off.
+
+**Solutions**:
+
+#### Option 1: Enable JIT Model Loading (Recommended)
+
+Enable JIT loading in LM Studio Server Settings to allow automatic model loading:
+
+1. **Open LM Studio**
+2. **Go to Server Settings**:
+   - Click the "Server" tab in the left sidebar
+   - Click "Server Settings" (gear icon)
+3. **Enable JIT Loading**:
+   - Find the "JIT Model Loading" or "Just-In-Time Loading" option
+   - Toggle it to **Enabled**
+4. **Restart the LM Studio Server**:
+   - Stop the server (if running)
+   - Start it again
+5. **Verify the fix**:
+   - Try using Saga again
+   - The model should now load automatically when requested
+
+#### Option 2: Pre-load the Embedding Model
+
+If you prefer to keep JIT loading disabled, manually load the model first:
+
+1. **Open LM Studio**
+2. **Download the embedding model**:
+   - Search for "text-embedding-multilingual-e5-large-instruct" in the model marketplace
+   - Download and install the model
+3. **Load the model**:
+   - Go to the "Local Models" tab
+   - Find "text-embedding-multilingual-e5-large-instruct"
+   - Click "Load" or "Start" to load the model into memory
+4. **Keep the model loaded**:
+   - Ensure the model remains loaded while using Saga
+   - If LM Studio unloads the model, you'll need to reload it
+5. **Verify the fix**:
+   - Try using Saga again
+   - The model should now be available
+
+#### Recommended LM Studio Configuration for Saga
+
+For the best experience with Saga, configure LM Studio with these settings:
+
+```env
+# LM Studio Server Settings
+- Port: 1234 (or your preferred port)
+- JIT Model Loading: Enabled (recommended)
+- Host: 127.0.0.1 (localhost)
+- CORS: Enabled (if accessing from other applications)
+```
+
+**Why Enable JIT Loading?**
+- **Flexibility**: Automatically loads models as needed
+- **Convenience**: No need to manually pre-load models
+- **Resource Management**: Only loads models when they're actually used
+- **Better Experience**: Seamless integration with Saga and other MCP servers
+
+**Troubleshooting Tips**:
+
+1. **Check if the model is installed**:
+   - In LM Studio, go to "Local Models"
+   - Search for "text-embedding-multilingual-e5-large-instruct"
+   - If not found, download it from the marketplace
+
+2. **Verify LM Studio server is running**:
+   ```bash
+   curl http://127.0.0.1:1234/v1/models
+   ```
+   You should see a list of available models including the embedding model.
+
+3. **Test the embedding endpoint directly**:
+   ```bash
+   curl http://127.0.0.1:1234/v1/embeddings \
+     -H "Content-Type: application/json" \
+     -d '{"input": ["test"], "model": "text-embedding-multilingual-e5-large-instruct"}'
+   ```
+
+4. **Check LM Studio logs**:
+   - Open LM Studio's log panel
+   - Look for errors related to model loading or JIT settings
+   - Verify the server is listening on the correct port
+
+5. **Restart LM Studio**:
+   - Sometimes a simple restart resolves configuration issues
+   - Stop the server, make changes, then start it again
+
 ## Storage Layout
 
 ```
