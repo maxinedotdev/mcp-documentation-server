@@ -1,5 +1,6 @@
 import type { EmbeddingProvider, EmbeddingProviderConfig, ProviderHealth } from './types.js';
-import { EmbeddingCache } from './embeddings/embedding-cache.js';
+import { EmbeddingCache, getEmbeddingCache } from './embeddings/embedding-cache.js';
+import { getEmbeddingBatchSize } from './utils.js';
 // Timeout imports: fetchWithTimeout wraps native fetch with AbortController-based timeout,
 // RequestTimeoutError is thrown when timeout is exceeded, getRequestTimeout retrieves
 // the configured timeout for 'embedding' operation type (falls back through hierarchy:
@@ -251,6 +252,88 @@ export class MultiEmbeddingProvider implements EmbeddingProvider {
             health: health.getHealth(),
         }));
     }
+
+    /**
+     * Generate embeddings for multiple texts in a batch
+     * Delegates to the current healthy provider's batch method if available
+     * Falls back to parallel individual requests if batch method is not available
+     * @param texts Array of texts to embed
+     * @returns Promise resolving to array of embedding vectors in the same order as input
+     */
+    async generateEmbeddings(texts: string[]): Promise<number[][]> {
+        if (texts.length === 0) {
+            return [];
+        }
+
+        console.error(`[MultiEmbeddingProvider] generateEmbeddings called for ${texts.length} texts`);
+
+        const startIndex = this.currentProviderIndex;
+        const attemptedProviders: string[] = [];
+
+        for (let i = 0; i < this.providers.length; i++) {
+            const providerIndex = (startIndex + i) % this.providers.length;
+            const { config, instance, health } = this.providers[providerIndex];
+
+            // Skip unhealthy providers
+            if (!health.isHealthy()) {
+                console.error(`[MultiEmbeddingProvider] Skipping unhealthy provider: ${config.provider}`);
+                attemptedProviders.push(`${config.provider} (unhealthy)`);
+                continue;
+            }
+
+            try {
+                console.error(`[MultiEmbeddingProvider] Trying batch provider: ${config.provider}`);
+
+                let embeddings: number[][];
+
+                // Check if provider has batch method
+                if (instance.generateEmbeddings) {
+                    embeddings = await instance.generateEmbeddings(texts);
+                } else {
+                    // Fallback: parallel individual requests
+                    console.error(`[MultiEmbeddingProvider] Provider ${config.provider} doesn't support batch, using parallel fallback`);
+                    embeddings = await this.generateEmbeddingsParallel(instance, texts);
+                }
+
+                // Validate dimensions on first success
+                if (this.dimensions === null && embeddings.length > 0) {
+                    this.dimensions = embeddings[0].length;
+                    console.error(`[MultiEmbeddingProvider] Established dimensions: ${this.dimensions}`);
+                } else if (embeddings.length > 0 && embeddings[0].length !== this.dimensions) {
+                    console.warn(`[MultiEmbeddingProvider] Dimension mismatch! ${config.provider} returned ${embeddings[0].length} dims, expected ${this.dimensions}`);
+                }
+
+                // Mark success and update current index
+                health.markSuccess();
+                this.currentProviderIndex = providerIndex;
+
+                console.error(`[MultiEmbeddingProvider] Batch success with provider: ${config.provider}, returned ${embeddings.length} embeddings`);
+                return embeddings;
+            } catch (error) {
+                const errorMsg = error instanceof Error ? error.message : String(error);
+                console.error(`[MultiEmbeddingProvider] Provider ${config.provider} batch failed: ${errorMsg}`);
+                health.markFailure();
+                attemptedProviders.push(`${config.provider} (failed: ${errorMsg})`);
+            }
+        }
+
+        throw new Error(`All embedding providers failed for batch request. Attempted: ${attemptedProviders.join(', ')}`);
+    }
+
+    /**
+     * Fallback method: generate embeddings in parallel using individual requests
+     * @param provider The embedding provider to use
+     * @param texts Array of texts to embed
+     * @returns Array of embeddings
+     */
+    private async generateEmbeddingsParallel(provider: EmbeddingProvider, texts: string[]): Promise<number[][]> {
+        // Use Promise.all to process all texts in parallel
+        // This is faster than sequential but doesn't benefit from batch API optimization
+        const embeddings = await Promise.all(
+            texts.map(text => provider.generateEmbedding(text))
+        );
+        return embeddings;
+    }
 }
 
 // ============================================================================
@@ -339,10 +422,11 @@ export class OpenAiEmbeddingProvider implements EmbeddingProvider {
         private apiKey?: string
     ) {
         this.instanceId = `${this.constructor.name}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-        
+
         if (process.env.MCP_CACHE_ENABLED !== 'false') {
             try {
-                this.cache = new EmbeddingCache();
+                // Use singleton cache to persist across provider instances
+                this.cache = getEmbeddingCache(undefined, modelName);
             } catch (error) {
                 console.warn('[OpenAiEmbeddingProvider] Failed to initialize cache:', error);
             }
@@ -445,6 +529,171 @@ export class OpenAiEmbeddingProvider implements EmbeddingProvider {
 
     getCacheStats(): any {
         return this.cache ? this.cache.getCacheStats() : null;
+    }
+
+    /**
+     * Generate embeddings for multiple texts in a batch
+     * This method is more efficient than calling generateEmbedding multiple times
+     * as it reduces the number of HTTP requests and leverages OpenAI's batch API
+     * @param texts Array of texts to embed
+     * @returns Promise resolving to array of embedding vectors in the same order as input
+     */
+    async generateEmbeddings(texts: string[]): Promise<number[][]> {
+        if (texts.length === 0) {
+            return [];
+        }
+
+        console.error(`[OpenAiEmbeddingProvider:${this.instanceId}] generateEmbeddings called for ${texts.length} texts`);
+
+        // Check cache for all texts first
+        const results: (number[] | null)[] = new Array(texts.length).fill(null);
+        const uncachedIndices: number[] = [];
+        const uncachedTexts: string[] = [];
+
+        if (this.cache) {
+            for (let i = 0; i < texts.length; i++) {
+                const cachedEmbedding = await this.cache.getEmbedding(texts[i]);
+                if (cachedEmbedding) {
+                    results[i] = cachedEmbedding;
+                } else {
+                    uncachedIndices.push(i);
+                    uncachedTexts.push(texts[i]);
+                }
+            }
+            console.error(`[OpenAiEmbeddingProvider:${this.instanceId}] Cache hits: ${texts.length - uncachedTexts.length}, misses: ${uncachedTexts.length}`);
+        } else {
+            // No cache, all texts need to be processed
+            uncachedIndices.push(...texts.map((_, i) => i));
+            uncachedTexts.push(...texts);
+        }
+
+        // If all texts were cached, return results
+        if (uncachedTexts.length === 0) {
+            return results as number[][];
+        }
+
+        // Get batch size from configuration
+        const batchSize = getEmbeddingBatchSize();
+
+        // Process uncached texts in batches
+        for (let i = 0; i < uncachedTexts.length; i += batchSize) {
+            const batchTexts = uncachedTexts.slice(i, i + batchSize);
+            const batchIndices = uncachedIndices.slice(i, i + batchSize);
+
+            console.error(`[OpenAiEmbeddingProvider:${this.instanceId}] Processing batch of ${batchTexts.length} texts (${i + 1}-${Math.min(i + batchSize, uncachedTexts.length)} of ${uncachedTexts.length})`);
+
+            try {
+                const batchEmbeddings = await this.generateEmbeddingsBatch(batchTexts);
+
+                // Store results and cache them
+                for (let j = 0; j < batchEmbeddings.length; j++) {
+                    const originalIndex = batchIndices[j];
+                    results[originalIndex] = batchEmbeddings[j];
+
+                    if (this.cache) {
+                        await this.cache.setEmbedding(texts[originalIndex], batchEmbeddings[j]);
+                    }
+                }
+            } catch (error) {
+                console.error(`[OpenAiEmbeddingProvider:${this.instanceId}] Batch failed, falling back to individual requests:`, error);
+
+                // Fallback: process individually
+                for (let j = 0; j < batchTexts.length; j++) {
+                    try {
+                        const embedding = await this.generateEmbedding(texts[batchIndices[j]]);
+                        results[batchIndices[j]] = embedding;
+                    } catch (individualError) {
+                        console.error(`[OpenAiEmbeddingProvider:${this.instanceId}] Individual request failed for text ${batchIndices[j]}:`, individualError);
+                        throw individualError; // Re-throw to fail fast
+                    }
+                }
+            }
+        }
+
+        // Verify all embeddings were generated
+        const missingIndices = results.map((r, i) => r === null ? i : -1).filter(i => i !== -1);
+        if (missingIndices.length > 0) {
+            throw new Error(`Failed to generate embeddings for indices: ${missingIndices.join(', ')}`);
+        }
+
+        return results as number[][];
+    }
+
+    /**
+     * Internal method to generate embeddings for a single batch via API
+     * @param texts Array of texts (must be <= batch size)
+     * @returns Array of embeddings
+     */
+    private async generateEmbeddingsBatch(texts: string[]): Promise<number[][]> {
+        const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+        };
+
+        if (this.apiKey) {
+            headers.Authorization = `Bearer ${this.apiKey}`;
+        }
+
+        const timeoutMs = getRequestTimeout('embedding');
+        const url = `${this.baseUrl}/embeddings`;
+
+        console.error(`[OpenAiEmbeddingProvider:${this.instanceId}] Making batch POST request to ${url} for ${texts.length} texts`);
+
+        const response = await fetchWithTimeout(url, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                model: this.modelName,
+                input: texts,
+            }),
+            timeoutMs,
+        });
+
+        const payloadText = await response.text();
+        if (!response.ok) {
+            throw new Error(`OpenAI-compatible embeddings batch request failed (${response.status}): ${payloadText}`);
+        }
+
+        let payload: any;
+        try {
+            payload = JSON.parse(payloadText);
+        } catch {
+            throw new Error(`OpenAI-compatible embeddings batch response was not JSON: ${payloadText}`);
+        }
+
+        if (payload?.error) {
+            const message = typeof payload.error === 'string' ? payload.error : payload.error?.message;
+            throw new Error(`OpenAI-compatible embeddings batch response error: ${message ?? payloadText}`);
+        }
+
+        // Validate response data
+        if (!Array.isArray(payload?.data)) {
+            throw new Error('OpenAI-compatible embeddings batch response missing data array');
+        }
+
+        // Sort by index to ensure correct order
+        const sortedData = [...payload.data].sort((a: any, b: any) => a.index - b.index);
+
+        const embeddings: number[][] = [];
+        for (const item of sortedData) {
+            if (!Array.isArray(item?.embedding)) {
+                throw new Error('OpenAI-compatible embeddings batch response missing embedding data for an item');
+            }
+
+            const vector = item.embedding.map((value: unknown) => Number(value));
+            if (vector.some((value: number) => Number.isNaN(value))) {
+                throw new Error('OpenAI-compatible embeddings batch response contains non-numeric values');
+            }
+
+            embeddings.push(vector);
+        }
+
+        // Update dimensions from first embedding
+        if (embeddings.length > 0) {
+            this.dimensions = embeddings[0].length;
+        }
+
+        console.error(`[OpenAiEmbeddingProvider:${this.instanceId}] Batch request successful, returned ${embeddings.length} embeddings`);
+        return embeddings;
     }
 }
 
