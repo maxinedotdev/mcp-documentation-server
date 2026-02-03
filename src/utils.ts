@@ -173,6 +173,103 @@ export function parseDate(dateString: string): Date {
 }
 
 /**
+ * Default embedding batch size
+ */
+const DEFAULT_EMBEDDING_BATCH_SIZE = 100;
+
+/**
+ * Maximum embedding batch size (supports up to 4096 for models like text-embedding-llama-embed-nemotron-8b)
+ */
+const MAX_EMBEDDING_BATCH_SIZE = 4096;
+
+/**
+ * Minimum embedding batch size
+ */
+const MIN_EMBEDDING_BATCH_SIZE = 1;
+
+/**
+ * Get the configured embedding batch size
+ * Reads from MCP_EMBEDDING_BATCH_SIZE environment variable
+ * Validates and returns a value between MIN and MAX
+ * @returns Validated batch size (default: 100)
+ */
+export function getEmbeddingBatchSize(): number {
+    const envValue = process.env.MCP_EMBEDDING_BATCH_SIZE;
+    
+    if (!envValue) {
+        return DEFAULT_EMBEDDING_BATCH_SIZE;
+    }
+    
+    const parsed = parseInt(envValue, 10);
+    
+    if (isNaN(parsed)) {
+        console.warn(`[Config] Invalid MCP_EMBEDDING_BATCH_SIZE value "${envValue}", using default: ${DEFAULT_EMBEDDING_BATCH_SIZE}`);
+        return DEFAULT_EMBEDDING_BATCH_SIZE;
+    }
+    
+    if (parsed < MIN_EMBEDDING_BATCH_SIZE) {
+        console.warn(`[Config] MCP_EMBEDDING_BATCH_SIZE (${parsed}) is below minimum (${MIN_EMBEDDING_BATCH_SIZE}), using minimum`);
+        return MIN_EMBEDDING_BATCH_SIZE;
+    }
+    
+    if (parsed > MAX_EMBEDDING_BATCH_SIZE) {
+        console.warn(`[Config] MCP_EMBEDDING_BATCH_SIZE (${parsed}) exceeds maximum (${MAX_EMBEDDING_BATCH_SIZE}), using maximum`);
+        return MAX_EMBEDDING_BATCH_SIZE;
+    }
+    
+    return parsed;
+}
+
+/**
+ * Default embedding dimension
+ * Current model (text-embedding-llama-embed-nemotron-8b) produces 4096 dimensions
+ */
+const DEFAULT_EMBEDDING_DIMENSION = 4096;
+
+/**
+ * Minimum embedding dimension
+ */
+const MIN_EMBEDDING_DIMENSION = 64;
+
+/**
+ * Maximum embedding dimension
+ */
+const MAX_EMBEDDING_DIMENSION = 8192;
+
+/**
+ * Get the configured embedding dimension
+ * Reads from MCP_EMBEDDING_DIMENSION environment variable
+ * Validates and returns a value between MIN and MAX
+ * @returns Validated embedding dimension (default: 4096)
+ */
+export function getEmbeddingDimension(): number {
+    const envValue = process.env.MCP_EMBEDDING_DIMENSION;
+
+    if (!envValue) {
+        return DEFAULT_EMBEDDING_DIMENSION;
+    }
+
+    const parsed = parseInt(envValue, 10);
+
+    if (isNaN(parsed)) {
+        console.warn(`[Config] Invalid MCP_EMBEDDING_DIMENSION value "${envValue}", using default: ${DEFAULT_EMBEDDING_DIMENSION}`);
+        return DEFAULT_EMBEDDING_DIMENSION;
+    }
+
+    if (parsed < MIN_EMBEDDING_DIMENSION) {
+        console.warn(`[Config] MCP_EMBEDDING_DIMENSION (${parsed}) is below minimum (${MIN_EMBEDDING_DIMENSION}), using minimum`);
+        return MIN_EMBEDDING_DIMENSION;
+    }
+
+    if (parsed > MAX_EMBEDDING_DIMENSION) {
+        console.warn(`[Config] MCP_EMBEDDING_DIMENSION (${parsed}) exceeds maximum (${MAX_EMBEDDING_DIMENSION}), using maximum`);
+        return MAX_EMBEDDING_DIMENSION;
+    }
+
+    return parsed;
+}
+
+/**
  * Get a logger for the specified prefix
  * Uses console.error for logging (MCP standard)
  */

@@ -14,7 +14,7 @@
 import * as crypto from 'crypto';
 import * as lancedb from '@lancedb/lancedb';
 import { Index } from '@lancedb/lancedb';
-import { getLogger } from '../utils.js';
+import { getLogger, getEmbeddingDimension } from '../utils.js';
 import type {
     DocumentV1,
     DocumentTagV1,
@@ -90,10 +90,11 @@ function getCurrentTimestamp(): string {
 
 /**
  * Generate a sample embedding vector for schema inference
- * Creates a 1536-dimensional vector with float32 values (all zeros)
+ * Creates a vector with float32 values (all zeros)
+ * Uses the configured embedding dimension (default: 4096)
  * This allows LanceDB to properly infer the embedding field type
  */
-function generateSampleEmbedding(dim: number = 1536): number[] {
+function generateSampleEmbedding(dim: number = getEmbeddingDimension()): number[] {
     return new Array(dim).fill(0);
 }
 
@@ -215,7 +216,7 @@ export class LanceDBV1 implements ValidationDatabase {
         } = {}
     ) {
         this.dbPath = dbPath;
-        this.embeddingDim = options.embeddingDim || 1536;
+        this.embeddingDim = options.embeddingDim || getEmbeddingDimension();
 
         // Load configurations from environment
         this.hnswConfig = getHNSWConfigFromEnv();

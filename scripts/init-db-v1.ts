@@ -13,6 +13,7 @@ import { Command } from 'commander';
 import * as lancedb from '@lancedb/lancedb';
 import { Index } from '@lancedb/lancedb';
 import chalk from 'chalk';
+import { getEmbeddingDimension } from '../src/utils.js';
 
 // ============================================================================
 // Configuration
@@ -34,10 +35,10 @@ function getCurrentTimestamp(): string {
 
 /**
  * Generate a sample embedding vector for schema inference
- * Creates a 1536-dimensional vector with float32 values (all zeros)
+ * Uses the configured embedding dimension (default: 4096)
  * This allows LanceDB to properly infer the embedding field type
  */
-function generateSampleEmbedding(dim: number = 1536): number[] {
+function generateSampleEmbedding(dim: number = getEmbeddingDimension()): number[] {
     return new Array(dim).fill(0);
 }
 
