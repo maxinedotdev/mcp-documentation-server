@@ -1,0 +1,346 @@
+# MLX Reranker Implementation
+
+This document describes the MLX-based reranker implementation for the Saga MCP server.
+
+## Overview
+
+The MLX reranker provides fast, local document reranking using Apple's MLX framework and the Jina Reranker V3 MLX model. This implementation runs entirely on Apple Silicon (M1/M2/M3) chips without requiring API calls, making it ideal for testing and development environments.
+
+## Automatic Configuration
+
+**NEW:** The MLX reranker now supports automatic configuration on Apple Silicon!
+
+### How Auto-Configuration Works
+
+When Saga starts on an Apple Silicon Mac:
+
+1. **Platform Detection**: Saga automatically detects if running on Apple Silicon (M1/M2/M3)
+2. **Provider Selection**: MLX is automatically set as the default reranking provider
+3. **Model Path**: The default model path is set to `~/.saga/models/jina-reranker-v3-mlx`
+4. **Background Download**: The model is automatically downloaded in the background if not present
+5. **Fallback**: If MLX setup fails, Saga gracefully falls back to API-based rerankers
+
+### Environment Variables for Auto-Configuration
+
+```bash
+# Enable/disable auto-configuration (default: true)
+export MCP_RERANKING_AUTO_CONFIGURE_MLX=true
+
+# Override auto-detected provider (if you prefer API-based reranking)
+export MCP_RERANKING_PROVIDER=cohere
+
+# Override auto-detected model path
+export MCP_RERANKING_MLX_MODEL_PATH=/custom/path/to/model
+```
+
+### Disabling Auto-Configuration
+
+If you want to disable automatic MLX configuration:
+
+```bash
+export MCP_RERANKING_AUTO_CONFIGURE_MLX=false
+```
+
+This will use the default API-based reranker (Cohere) instead.
+
+## Requirements
+
+### Hardware
+- Apple Silicon Mac (M1, M2, or M3 chip)
+
+### Software
+- UV package manager (https://docs.astral.sh/uv/)
+- MLX framework (managed by UV via pyproject.toml)
+- Jina Reranker V3 MLX model (automatically downloaded or manually)
+
+## Installation
+
+### Automatic Installation (Recommended)
+
+On Apple Silicon, simply start Saga. The auto-configuration will:
+
+1. Detect Apple Silicon
+2. Configure MLX as the default provider
+3. Download the model to `~/.saga/models/jina-reranker-v3-mlx` in the background
+4. Initialize the MLX reranker when ready
+
+No manual steps required!
+
+### Manual Installation
+
+If you prefer manual setup or need to troubleshoot:
+
+#### 1. Install UV Package Manager
+
+UV is required to manage Python dependencies in an isolated environment and avoid polluting the OS Python environment.
+
+**macOS/Linux:**
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+**Windows:**
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Verify installation:
+```bash
+uv --version
+```
+
+For more information, visit: https://docs.astral.sh/uv/getting-started/installation/
+
+#### 2. Download Jina Reranker V3 MLX Model
+
+```bash
+# Using Hugging Face CLI
+pip install huggingface_hub
+huggingface-cli download jinaai/jina-reranker-v3-mlx --local-dir /path/to/model
+```
+
+Or download directly from: https://huggingface.co/jinaai/jina-reranker-v3-mlx
+
+#### 3. Configure Environment Variables
+
+Set the following environment variables to use the MLX reranker:
+
+```bash
+# Enable reranking
+export MCP_RERANKING_ENABLED=true
+
+# Use MLX provider (optional on Apple Silicon, auto-detected)
+export MCP_RERANKING_PROVIDER=mlx
+
+# Path to the downloaded MLX model (optional, auto-detected)
+export MCP_RERANKING_MLX_MODEL_PATH=/path/to/jina-reranker-v3-mlx
+
+# UV executable path (optional, defaults to 'uv')
+export MCP_RERANKING_MLX_UV_PATH=uv
+
+# Reranking parameters (optional)
+export MCP_RERANKING_CANDIDATES=50
+export MCP_RERANKING_TOP_K=10
+export MCP_RERANKING_TIMEOUT=60000
+```
+
+## Usage
+
+### Basic Usage
+
+```typescript
+import { MlxReranker } from './reranking/mlx-reranker.js';
+
+// Create the reranker
+const reranker = new MlxReranker({
+    model: 'jina-reranker-v3-mlx',
+    modelPath: '/path/to/jina-reranker-v3-mlx',
+    uvPath: 'uv',  // UV package manager
+    maxCandidates: 50,
+    topK: 10,
+    timeout: 60000,
+});
+
+// Initialize (checks UV and MLX availability)
+await reranker.initialize();
+
+// Rerank documents
+const query = 'machine learning frameworks';
+const documents = [
+    'TensorFlow is an open-source machine learning framework',
+    'PyTorch provides a flexible deep learning platform',
+    'MLX is Apple\'s machine learning framework for Silicon',
+];
+
+const results = await reranker.rerank(query, documents);
+
+// Results are sorted by relevance score (highest first)
+console.log(results);
+// Output:
+// [
+//   { index: 2, score: 0.95 },  // MLX document
+//   { index: 0, score: 0.82 },  // TensorFlow
+//   { index: 1, score: 0.75 },  // PyTorch
+// ]
+```
+
+### Using with Configuration
+
+The reranker can also be configured via environment variables and used with the configuration system:
+
+```typescript
+import { getRerankingConfig } from './reranking/config.js';
+import { MlxReranker } from './reranking/mlx-reranker.js';
+
+const config = getRerankingConfig();
+
+if (config.provider === 'mlx') {
+    const reranker = new MlxReranker({
+        model: config.model,
+        modelPath: process.env.MCP_RERANKING_MLX_MODEL_PATH!,
+        uvPath: process.env.MCP_RERANKING_MLX_UV_PATH || 'uv',
+        maxCandidates: config.maxCandidates,
+        topK: config.topK,
+        timeout: config.timeout,
+    });
+    
+    await reranker.initialize();
+    // Use reranker...
+}
+```
+
+## Architecture
+
+### Components
+
+1. **TypeScript Wrapper** (`mlx-reranker.ts`)
+   - Implements the `Reranker` interface
+   - Spawns Python subprocess to run MLX model
+   - Handles communication via JSON over stdin/stdout
+   - Manages timeouts and error handling
+
+2. **Python Script** (`mlx_reranker.py`)
+   - Loads and runs the MLX model
+   - Accepts query and documents as JSON input
+   - Returns reranking results as JSON output
+   - Handles model loading and inference
+
+### Data Flow
+
+```
+TypeScript Application
+    ↓ (spawn)
+Python Subprocess
+    ↓ (load)
+MLX Model (Jina Reranker V3)
+    ↓ (inference)
+Reranking Scores
+    ↓ (JSON)
+TypeScript Application
+```
+
+## Performance
+
+### Expected Performance
+
+- **Initialization**: 1-3 seconds (model loading)
+- **Reranking**: 100-500ms for 10-50 documents (varies by document length)
+- **Memory**: 2-4 GB (model loaded in memory)
+
+### Comparison with API-based Rerankers
+
+| Metric | MLX Reranker | API Reranker |
+|--------|--------------|--------------|
+| Latency | 100-500ms | 500-2000ms |
+| Cost | Free (local) | Per-request pricing |
+| Privacy | 100% local | Data sent to API |
+| Setup | Requires MLX installation | Just API key |
+| Hardware | Apple Silicon only | Any device |
+
+## Limitations
+
+1. **Apple Silicon Only**: MLX only runs on Apple Silicon (M1/M2/M3) chips
+2. **UV Dependency**: Requires UV package manager to be installed
+3. **Model Download**: Must download the model manually from Hugging Face
+4. **Memory Usage**: Model requires 2-4 GB of RAM
+5. **First Request Slow**: First reranking request is slower due to model loading
+
+## Troubleshooting
+
+### "UV not found"
+
+UV is required for MLX reranker. Install UV package manager:
+
+**macOS/Linux:**
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+**Windows:**
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Verify installation:
+```bash
+uv --version
+```
+
+If UV is installed but not in your PATH, set the UV path:
+```bash
+export MCP_RERANKING_MLX_UV_PATH=/path/to/uv
+```
+
+### "MLX dependencies not installed"
+
+UV will automatically install MLX dependencies in an isolated environment. If you encounter issues:
+
+1. Ensure UV is installed and accessible
+2. Check that the `pyproject.toml` file exists in the `src/reranking` directory
+3. Try running `uv run python -c "import mlx; print(mlx.__version__)"` manually
+
+### "Failed to load model from path"
+
+Ensure the model path is correct and the model files exist:
+```bash
+ls -la /path/to/jina-reranker-v3-mlx
+```
+
+### "UV command failed"
+
+Check that UV is properly installed:
+```bash
+uv --version
+```
+
+If UV is installed but not in PATH, specify the full path:
+```bash
+export MCP_RERANKING_MLX_UV_PATH=/full/path/to/uv
+```
+
+### "MLX reranker timed out"
+
+Increase the timeout value:
+```bash
+export MCP_RERANKING_TIMEOUT=120000  # 120 seconds
+```
+
+## Testing
+
+The MLX reranker includes comprehensive tests in `src/reranking/__tests__/mlx-reranker.test.ts`.
+
+To run the tests:
+```bash
+npm test -- src/reranking/__tests__/mlx-reranker.test.ts
+```
+
+Note: The tests mock the Python subprocess, so they don't require MLX to be installed.
+
+## Switching Between API and MLX Rerankers
+
+You can easily switch between API-based and MLX rerankers by changing the provider:
+
+```bash
+# Use API-based reranker (Cohere, Jina, OpenAI)
+export MCP_RERANKING_PROVIDER=cohere
+export MCP_RERANKING_API_KEY=your-api-key
+
+# Use MLX reranker
+export MCP_RERANKING_PROVIDER=mlx
+export MCP_RERANKING_MLX_MODEL_PATH=/path/to/model
+```
+
+## Future Improvements
+
+1. **Model Caching**: Cache loaded model in memory for faster subsequent requests
+2. **Batch Processing**: Support for batching multiple reranking requests
+3. **GPU Acceleration**: Leverage GPU cores on Apple Silicon for faster inference
+4. **Model Quantization**: Use quantized models for reduced memory usage
+5. **Automatic Model Download**: Implement automatic model download from Hugging Face
+
+## References
+
+- [MLX Framework](https://ml-explore.github.io/mlx/)
+- [Jina Reranker V3 MLX](https://huggingface.co/jinaai/jina-reranker-v3-mlx)
+- [Apple ML Research](https://machinelearning.apple.com/)
+- [Jina AI Documentation](https://jina.ai/)

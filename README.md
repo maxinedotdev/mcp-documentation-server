@@ -1,440 +1,621 @@
-# Saga
+# Saga MCP Server
 
-A TypeScript-based [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that provides local-first document management and semantic search using embeddings. The server exposes a collection of MCP tools and uses on-disk persistence, an in-memory index, caching, and LanceDB vector storage by default with an in-memory fallback.
+[![npm publish](https://github.com/maxinedotdev/saga/actions/workflows/npm-publish.yml/badge.svg)](https://github.com/maxinedotdev/saga/actions/workflows/npm-publish.yml)
 
-## LLM-assisted analysis (optional)
+Saga is a TypeScript-based [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for local-first document management and semantic search using embeddings. It ships with LanceDB vector storage, web crawling, and optional LLM integration.
 
-Optional integration with LLM providers for document analysis and summarization. Supports Gemini (cloud) or OpenAI-compatible endpoints such as LM Studio (local) or synthetic.new (remote).
+## Installation
 
-### Capabilities
-- LLM search via `search_documents_with_ai`
-- Natural-language queries and summaries over document content
-- Context window retrieval for surrounding chunks
-- File mapping cache to avoid re-uploading the same files to Gemini
+### Local Development
 
+You can install from npm or clone and link locally:
 
-## Core capabilities
+```bash
+# Install from npm
+npm install -g @maxinedotdev/saga
 
-### Search and analysis
-- LLM search using the configured provider (optional)
-- Semantic search using embeddings plus in-memory keyword index
-- Context window retrieval for surrounding chunks
+# Or clone and build
+git clone https://github.com/maxinedotdev/saga.git
+cd saga
+npm install
+npm run build
 
-### Performance and optimization
-- O(1) document lookup and keyword index through `DocumentIndex`
-- LanceDB vector storage (default): disk-based vector search with HNSW indexing for larger datasets
-- LRU `EmbeddingCache` to avoid recomputing embeddings and speed up repeated queries
-- Parallel chunking and batch processing to accelerate ingestion of large documents
-- Streaming file reader to process large files without high memory usage
-- Automatic migration of existing JSON documents to LanceDB on first use
+# Link globally so it's available in other MCP consumers
+npm link
+```
 
-### File management
-- Copy-based storage with backup preservation
-- Complete deletion removes JSON files and associated originals
-- Local-only storage; all data resides in `~/.saga/`
+After linking, the `saga` command will be available globally across all VSCode windows.
 
-## Quick Start
+### Direct Path Method (Alternative)
 
-### Configure an MCP client
-
-Example configuration for an MCP client (e.g., Claude Desktop):
+If you prefer not to use `npm link`, you can reference the server directly in your MCP configuration:
 
 ```json
 {
   "mcpServers": {
-    "documentation": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@maxinedotdev/saga"
-      ],
+    "saga": {
+      "command": "node",
+      "args": ["/full/path/to/saga/dist/server.js"],
       "env": {
-            "MCP_BASE_DIR": "/path/to/workspace",  // Optional, custom data directory (default: ~/.saga)
-            "MCP_VECTOR_DB": "lance",  // Optional, "lance" (default) or "memory" (legacy in-memory)
-            "MCP_LANCE_DB_PATH": "~/.data/lancedb",  // Optional, custom LanceDB path (default: {dataDir}/lancedb)
-            "MCP_EMBEDDING_PROVIDER": "transformers",  // Optional, "transformers" or "openai"
-            "MCP_EMBEDDING_MODEL": "Xenova/all-MiniLM-L6-v2",
-            "MCP_EMBEDDING_BASE_URL": "http://127.0.0.1:1234",  // Optional, OpenAI-compatible embeddings base URL
-            "MCP_EMBEDDING_API_KEY": "your-api-key-here",  // Optional, required for remote embeddings
-            "MCP_AI_PROVIDER": "gemini",  // Optional, "gemini" or "openai"
-            "GEMINI_API_KEY": "your-api-key-here",  // Optional, enables Gemini LLM search
-            "MCP_AI_BASE_URL": "http://127.0.0.1:1234",  // Optional, OpenAI-compatible base URL (LM Studio / synthetic.new)
-            "MCP_AI_MODEL": "ministral-3-8b-instruct-2512",  // Optional, defaults based on base URL
-            "MCP_AI_API_KEY": "your-api-key-here",  // Optional, required for synthetic.new
+        "MCP_BASE_DIR": "~/.saga",
+        "MCP_EMBEDDING_PROVIDER": "openai",
+        "MCP_EMBEDDING_BASE_URL": "http://localhost:1234",
+        "MCP_EMBEDDING_MODEL": "llama-nemotron-embed-1b-v2"
       }
     }
   }
 }
 ```
 
-### Basic workflow
+### Via npm (When Published)
 
-- Add documents using the `add_document` tool or by placing `.txt`, `.md`, or `.pdf` files into the uploads folder and calling `process_uploads`.
-- Search documents with `search_documents` to get ranked chunk hits.
-- Use `get_context_window` to fetch neighboring chunks and provide LLMs with richer context.
-
-## Exposed MCP tools
-
-The server exposes several tools (validated with Zod schemas) for document lifecycle and search:
-
-### Document management
-- `add_document` — Add a document (title, content, metadata)
-- `list_documents` — List documents with pagination; metadata/preview are optional
-- `get_document` — Retrieve a full document by id
-- `delete_document` — Remove a document, its chunks, and associated original files
-- `delete_crawl_session` — Remove all documents created by a crawl session
-
-### File processing
-- `process_uploads` — Convert files in uploads folder into documents (chunking + embeddings + backup preservation)
-- `get_uploads_path` — Returns the absolute uploads folder path
-- `list_uploads_files` — Lists files in uploads folder
-
-### Documentation crawling
-- `crawl_documentation` — Crawl public docs from a seed URL with depth/page limits and robots.txt compliance
-
-### Search and analysis
-- `search_documents_with_ai` — LLM search using the configured provider (requires provider configuration)
-- `search_documents` — Semantic search within a document (returns chunk hits and LLM hint)
-- `get_context_window` — Return a window of chunks around a target chunk index
-
-## Configuration & environment variables
-
-Configure behavior via environment variables. Important options:
-
-### Vector Database Configuration
-- `MCP_VECTOR_DB` — vector database selection: `lance` (default, LanceDB) or `memory` (legacy in-memory).
-- `MCP_LANCE_DB_PATH` — custom path for LanceDB storage (default: `{dataDir}/lancedb`).
-
-**LanceDB characteristics**:
-- Disk-based vector search with HNSW indexing
-- Scales better than in-memory as the dataset grows
-- Lower memory usage during queries
-- Metadata filtering support
-- Automatic migration of existing JSON documents on first use
-- Local-first storage (no external server required)
-
-**When to use LanceDB**:
-- Larger document sets
-- Frequent search queries
-- Metadata filtering
-- Limited system memory
-
-**When to use in-memory**:
-- Small document sets
-- Simple setup without additional storage
-- Testing and development
-
-### General Configuration
-- `MCP_BASE_DIR` — base directory for data storage (default: `~/.saga`). Supports `~` expansion for the home directory.
-- `MCP_EMBEDDING_PROVIDER` — embedding provider selection: `transformers` or `openai` (optional; defaults to `transformers`).
-- `MCP_EMBEDDING_MODEL` — embedding model name. Defaults to `Xenova/all-MiniLM-L6-v2` for Transformers.js or `text-embedding-nomic-embed-text-v1.5` for LM Studio.
-- `MCP_EMBEDDING_BASE_URL` — OpenAI-compatible embeddings base URL (required for `openai`, e.g. `http://127.0.0.1:1234`).
-- `MCP_EMBEDDING_API_KEY` — OpenAI-compatible embeddings API key (required for remote embeddings).
-- `MCP_AI_PROVIDER` — LLM provider selection: `gemini` or `openai` (optional; defaults based on configured keys).
-- `MCP_AI_BASE_URL` — OpenAI-compatible base URL (required for `openai`, e.g. `http://127.0.0.1:1234` or `https://api.synthetic.new/openai/v1`).
-- `MCP_AI_MODEL` — OpenAI-compatible model name (optional; defaults based on base URL).
-- `MCP_AI_API_KEY` — OpenAI-compatible API key (required for synthetic.new, optional for local LM Studio).
-- `MCP_AI_MAX_CONTEXT_CHUNKS` — Max chunks included in LLM prompt for OpenAI-compatible providers (default: `6`).
-- `GEMINI_API_KEY` — Google Gemini API key for LLM search features (optional, enables `search_documents_with_ai` when provider is Gemini).
-- `MCP_INDEXING_ENABLED` — enable/disable the `DocumentIndex` (true/false). Default: `true`.
-- `MCP_CACHE_SIZE` — LRU embedding cache size (integer). Default: `1000`.
-- `MCP_PARALLEL_ENABLED` — enable parallel chunking (true/false). Default: `true`.
-- `MCP_MAX_WORKERS` — number of parallel workers for chunking/indexing. Default: `4`.
-- `MCP_STREAMING_ENABLED` — enable streaming reads for large files. Default: `true`.
-- `MCP_STREAM_CHUNK_SIZE` — streaming buffer size in bytes. Default: `65536` (64KB).
-- `MCP_STREAM_FILE_SIZE_LIMIT` — threshold (bytes) to switch to streaming path. Default: `10485760` (10MB).
-
-## LLM provider setup
-
-- **Gemini** (cloud): set `MCP_AI_PROVIDER=gemini` and `GEMINI_API_KEY` from [Google AI Studio](https://aistudio.google.com/app/apikey).
-- **LM Studio** (local): set `MCP_AI_PROVIDER=openai` and `MCP_AI_BASE_URL=http://127.0.0.1:1234`. Default model is `ministral-3-8b-instruct-2512` unless `MCP_AI_MODEL` overrides it.
-- **synthetic.new** (remote): set `MCP_AI_PROVIDER=openai`, `MCP_AI_BASE_URL=https://api.synthetic.new/openai/v1`, and `MCP_AI_API_KEY`. Default model is `glm-4.7` unless `MCP_AI_MODEL` overrides it.
-- If `MCP_AI_PROVIDER` is unset, the server falls back to Gemini when `GEMINI_API_KEY` is set, otherwise it uses OpenAI-compatible settings when `MCP_AI_BASE_URL` is set.
-
-## LLM provider validation
-
-- Start the server with the provider env vars configured.
-- Use `list_documents` (with `limit`/`offset`) to obtain a document ID.
-- Call `search_documents_with_ai` with a query and verify JSON output contains `search_results` and `relevant_sections`.
-
-## Embedding provider validation
-
-- Set `MCP_EMBEDDING_PROVIDER=openai` and `MCP_EMBEDDING_BASE_URL=http://127.0.0.1:1234`.
-- Add a document and run `search_documents` to confirm embeddings are generated via LM Studio.
-- Re-ingest documents when switching embedding provider or model.
-- Or run the CLI check: `node dist/embedding-cli.js --provider openai --base-url http://127.0.0.1:1234 --model text-embedding-nomic-embed-text-v1.5`.
-
-Example `.env` (defaults applied when variables are not set):
-
-```env
-# Vector Database Configuration
-MCP_VECTOR_DB=lance               # "lance" (default) or "memory" (legacy)
-MCP_LANCE_DB_PATH=~/.data/lancedb  # Custom LanceDB path (optional)
-
-# Base Directory
-MCP_BASE_DIR=/path/to/workspace   # Base directory for data storage (default: ~/.saga)
-
-# Indexing and Performance
-MCP_INDEXING_ENABLED=true          # Enable O(1) indexing (default: true)
-MCP_CACHE_SIZE=1000                # LRU cache size (default: 1000)
-MCP_PARALLEL_ENABLED=true          # Enable parallel processing (default: true)
-MCP_MAX_WORKERS=4                  # Parallel worker count (default: 4)
-MCP_STREAMING_ENABLED=true         # Enable streaming (default: true)
-MCP_STREAM_CHUNK_SIZE=65536        # Stream chunk size (default: 64KB)
-MCP_STREAM_FILE_SIZE_LIMIT=10485760 # Streaming threshold (default: 10MB)
-
-# Embedding Provider
-MCP_EMBEDDING_PROVIDER=transformers  # "transformers" or "openai" (optional)
-MCP_EMBEDDING_MODEL=Xenova/all-MiniLM-L6-v2  # Embedding model name
-MCP_EMBEDDING_BASE_URL=http://127.0.0.1:1234  # OpenAI-compatible embeddings base URL (optional)
-MCP_EMBEDDING_API_KEY=your-api-key-here  # OpenAI-compatible embeddings API key (required for remote)
-
-# LLM Provider
-MCP_AI_PROVIDER=gemini             # "gemini" or "openai" (optional)
-MCP_AI_BASE_URL=http://127.0.0.1:1234  # OpenAI-compatible base URL (optional)
-MCP_AI_MODEL=ministral-3-8b-instruct-2512  # OpenAI-compatible model (optional)
-MCP_AI_API_KEY=your-api-key-here   # OpenAI-compatible API key (required for synthetic.new)
-MCP_AI_MAX_CONTEXT_CHUNKS=6        # Max chunks in LLM prompt (OpenAI-compatible)
-GEMINI_API_KEY=your-api-key-here   # Google Gemini API key (optional)
-```
-
-Default storage layout (data directory):
-
-```
-~/.saga/  # Or custom path via MCP_BASE_DIR
-├── data/        # Document JSON files
-│   ├── *.json   # Document metadata and chunks
-│   └── *.md     # Markdown versions of documents
-├── lancedb/     # LanceDB vector storage (when using LanceDB)
-│   └── chunks/  # Vector index and chunk data
-└── uploads/     # Drop files (.txt, .md, .pdf) to import
-```
-
-## Migration Guide
-
-### Automatic Migration
-When you first use LanceDB, the system automatically detects existing JSON documents and migrates them:
-
-1. **First Startup**: LanceDB is initialized
-2. **Detection**: System checks for existing JSON documents
-3. **Migration**: Documents with embeddings are migrated to LanceDB
-4. **Completion**: Migration summary is logged to console
-
-No manual migration is required. Your existing documents are preserved.
-
-### Manual Migration
-If you need to re-run migration:
+> **Note:** This method requires the package to be published to npm first.
 
 ```bash
-# Re-initialize by deleting LanceDB directory and restarting
-rm -rf ~/.saga/lancedb
-# Restart your MCP server - migration will run automatically
+npm install -g @maxinedotdev/saga
 ```
 
-### Rollback to In-Memory
-To switch back to in-memory storage:
+## Quick Start
 
-```bash
-# Set environment variable
-export MCP_VECTOR_DB=memory
-# Restart your MCP server
-```
+### Configure an MCP Client
 
-### Data Integrity
-- **JSON files are preserved**: Original documents remain in `data/` directory
-- **Embeddings are cached**: No need to regenerate embeddings
-- **Atomic operations**: Migration is transaction-safe
-- **Error handling**: If migration fails, system falls back to in-memory
-
-## Usage examples
-
-### Basic Document Operations
-
-Add a document via MCP tool:
+Add to your MCP client configuration (e.g., Claude Desktop):
 
 ```json
 {
-  "tool": "add_document",
-  "arguments": {
-    "title": "Python Basics",
-    "content": "Python is a high-level programming language...",
-    "metadata": {
-      "category": "programming",
-      "tags": ["python", "tutorial"]
+  "mcpServers": {
+    "documentation": {
+      "command": "saga",
+      "env": {
+        "MCP_BASE_DIR": "~/.saga",
+        "MCP_EMBEDDING_PROVIDER": "openai",
+        "MCP_EMBEDDING_BASE_URL": "http://localhost:1234",
+        "MCP_EMBEDDING_MODEL": "llama-nemotron-embed-1b-v2"
+      }
     }
   }
 }
 ```
 
-Search a document:
+> **Note:** If you didn't run `npm link` during installation, use the direct path method shown in the Installation section above.
 
-```json
-{
-  "tool": "search_documents",
-  "arguments": {
-    "document_id": "doc-123",
-    "query": "variable assignment",
-    "limit": 5
-  }
-}
+### Basic Usage
+
+1. **Add documents**: Use `add_document` tool or place `.txt`/`.md` files in the uploads folder and call `process_uploads`
+2. **Search**: Use `query` for semantic document discovery
+3. **Analyze**: Use `search_documents_with_ai` for LLM-powered analysis (requires LLM configuration)
+
+## Features
+
+- **Semantic Search**: Vector-based search with LanceDB and HNSW indexing
+- **Two-Stage Retrieval**: Optional cross-encoder reranking for improved result quality
+- **Query-First Discovery**: Find relevant documents quickly with hybrid ranking (vector + keyword fallback)
+- **Web Crawling**: Crawl public documentation with `crawl_documentation`
+- **LLM Integration**: Optional AI-powered analysis via OpenAI-compatible providers (LM Studio, synthetic.new)
+- **Performance**: LRU caching, parallel processing, streaming file reads
+- **Local-First**: All data stored in `~/.saga/` - no external services required
+
+### Reranking
+
+Saga supports optional two-stage retrieval that improves search result quality by combining vector search with cross-encoder reranking:
+
+1. **Stage 1 - Vector Search**: Retrieve a larger pool of candidate results (5x the requested limit)
+2. **Stage 2 - Reranking**: Use a cross-encoder model to re-rank candidates based on semantic similarity to the query
+
+This approach provides more accurate results, especially for:
+- Multilingual queries (Norwegian, English, and mixed-language content)
+- Code snippet searches
+- Complex technical queries
+
+**Note**: Reranking is enabled by default but can be disabled via configuration or per-query. The feature gracefully degrades to vector-only search if the reranking service is unavailable.
+
+## Database v1.0.0
+
+Saga now uses a redesigned v1.0.0 database schema with significant improvements in performance, scalability, and data integrity.
+
+### Key Improvements
+
+| Area | Improvement | Benefit |
+|------|-------------|---------|
+| **Schema** | Flattened metadata, normalized tables | Type safety, better queries |
+| **Indexes** | Dynamic IVF_PQ, scalar indexes | Fast queries, scalable |
+| **Storage** | Single source of truth (LanceDB only) | No duplication, consistency |
+| **Memory** | Optional LRU caches | Scalable, configurable |
+| **Migration** | Migrationless (manual reset) | Clear state, no legacy coupling |
+| **Performance** | <100ms query latency | Better UX |
+
+### Quick Start
+
+#### New Installation
+
+For new installations, the v1.0.0 schema is initialized automatically:
+
+```bash
+# The database will be initialized on first run
+saga
 ```
 
-### Crawl Documentation
+#### Legacy Data (No Migration)
 
-The crawler ingests public documentation starting from a seed URL, respects `robots.txt`, and uses sitemaps when available.
-Crawled content is untrusted; review and sanitize before using it in prompts or responses.
+Saga v1 is **migrationless**. If you have legacy data, discard it and re-ingest.
+There is no backward compatibility, and the server will prompt you to manually
+delete the database when it detects a schema mismatch.
 
-```json
-{
-  "tool": "crawl_documentation",
-  "arguments": {
-    "seed_url": "https://example.com/docs",
-    "max_pages": 100,
-    "max_depth": 5,
-    "same_domain_only": true
-  }
-}
+```bash
+rm -rf ~/.saga/lancedb
 ```
 
-To remove a crawl session later:
 
-```json
-{
-  "tool": "delete_crawl_session",
-  "arguments": {
-    "crawl_id": "your-crawl-id"
-  }
-}
+### Performance Targets
+
+| Metric | Target |
+|--------|--------|
+| Vector search (top-10) | < 100ms |
+| Scalar filter (document_id) | < 10ms |
+| Tag filter query | < 50ms |
+| Keyword search | < 75ms |
+| Combined query | < 150ms |
+
+### Storage Layout
+
+```
+~/.saga/lancedb/
+├── documents.lance/         # Document metadata
+├── document_tags.lance/     # Tag relationships
+├── document_languages.lance/# Language relationships
+├── chunks.lance/            # Text chunks with embeddings
+├── code_blocks.lance/       # Code blocks with embeddings
+├── keywords.lance/          # Keyword inverted index
+└── schema_version.lance/    # Schema tracking
 ```
 
-### LLM search examples
+### Documentation
 
-**Analysis** (requires provider configuration):
+- **[Schema Reference](docs/database-v1-schema-reference.md)** - Complete schema documentation
+- **[API Reference](docs/database-v1-api-reference.md)** - LanceDBV1 API documentation
+- **[Design Document](plans/database-schema-v1-design.md)** - Detailed design rationale
 
-```json
-{
-  "tool": "search_documents_with_ai",
-  "arguments": {
-    "document_id": "doc-123",
-    "query": "explain the main concepts and their relationships"
-  }
-}
+### Database Management
+
+#### Check Database Status
+
+```bash
+# View database statistics
+node dist/scripts/db-status.ts
 ```
 
-**Complex questions**:
+#### Initialize Fresh Database
 
-```json
-{
-  "tool": "search_documents_with_ai",
-  "arguments": {
-    "document_id": "doc-123",
-    "query": "what are the key architectural patterns and how do they work together?"
-  }
-}
+```bash
+# Initialize a new v1.0.0 database
+node dist/scripts/init-db-v1.ts --verbose
 ```
 
-**Summaries**:
+#### Drop Database
 
-```json
-{
-  "tool": "search_documents_with_ai",
-  "arguments": {
-    "document_id": "doc-123",
-    "query": "summarize the core principles and provide examples"
-  }
-}
+```bash
+# Remove all database data
+node dist/scripts/drop-db.ts
 ```
 
-### Context Enhancement
+### Troubleshooting
 
-Fetch context window:
+#### Schema/Initialization Issues
 
-```json
-{
-  "tool": "get_context_window",
-  "arguments": {
-    "document_id": "doc-123",
-    "chunk_index": 5,
-    "before": 2,
-    "after": 2
-  }
-}
+**Symptom**: Startup error mentions schema mismatch or missing tables.
+
+**Solutions**:
+1. Stop the server
+2. Delete the database directory:
+   ```bash
+   rm -rf ~/.saga/lancedb
+   ```
+3. Restart the server and re-ingest documents
+
+#### Performance Issues
+
+**Symptom**: Slow queries
+
+**Solutions**:
+1. Check database stats: `node dist/scripts/db-status.ts`
+2. Reduce result limit for faster queries
+3. Monitor with `node dist/scripts/benchmark-db.ts`
+
+**Symptom**: High memory usage
+
+**Solutions**:
+1. Use pagination for large result sets
+2. Reduce batch size for inserts
+3. Close database connections when done
+
+## Available Tools
+
+### Document Management
+- `add_document` - Add a document with title, content, and metadata
+- `list_documents` - List documents with pagination
+- `get_document` - Retrieve full document by ID
+- `delete_document` - Remove a document and its chunks
+- `query` - Query-first document discovery with semantic ranking
+
+### File Processing
+- `process_uploads` - Convert files in uploads folder to documents
+- `get_uploads_path` - Get the absolute uploads folder path
+- `list_uploads_files` - List files in uploads folder
+
+### Search & Analysis
+- `search_documents_with_ai` - LLM-powered analysis (requires provider config)
+- `get_context_window` - Get neighboring chunks for context
+- `crawl_documentation` - Crawl public docs from a seed URL
+- `delete_crawl_session` - Remove all documents from a crawl session
+
+## Configuration
+
+Configure via environment variables:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MCP_BASE_DIR` | Data storage directory | `~/.saga` |
+| `MCP_EMBEDDING_PROVIDER` | `openai` (OpenAI-compatible API only) | `openai` |
+| `MCP_EMBEDDING_MODEL` | Embedding model name | `llama-nemotron-embed-1b-v2` |
+| `MCP_EMBEDDING_BASE_URL` | OpenAI-compatible base URL (required) | - |
+| `MCP_AI_BASE_URL` | LLM provider URL (LM Studio/synthetic.new) | - |
+| `MCP_AI_MODEL` | LLM model name | Provider default |
+| `MCP_AI_API_KEY` | API key for remote providers | - |
+| `MCP_TAG_GENERATION_ENABLED` | Auto-generate tags with AI | `false` |
+| `MCP_SIMILARITY_THRESHOLD` | Min similarity score (0.0-1.0) | `0.0` |
+
+### Reranking Configuration
+
+Reranking improves search result quality by using cross-encoder models to re-rank vector search results.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MCP_RERANKING_ENABLED` | Enable/disable reranking feature | `true` |
+| `MCP_RERANKING_PROVIDER` | Reranking provider: `cohere`, `jina`, `openai`, `custom` | `cohere` |
+| `MCP_RERANKING_BASE_URL` | Base URL for custom provider | (provider default) |
+| `MCP_RERANKING_API_KEY` | API key for reranking provider | - |
+| `MCP_RERANKING_MODEL` | Reranking model name | (provider default) |
+| `MCP_RERANKING_CANDIDATES` | Max candidates to retrieve for reranking | `50` |
+| `MCP_RERANKING_TOP_K` | Number of results to return after reranking | `10` |
+| `MCP_RERANKING_TIMEOUT` | Reranking API timeout (ms) | `30000` |
+
+**Provider-Specific Defaults:**
+
+- **Cohere**: `https://api.cohere.ai/v1`, model: `rerank-multilingual-v3.0`
+- **Jina AI**: `https://api.jina.ai/v1`, model: `jina-reranker-v1-base-en`
+- **OpenAI**: `https://api.openai.com/v1`, model: `gpt-4o-mini`
+
+**Example Configurations:**
+
+```env
+# Cohere (recommended for multilingual)
+MCP_RERANKING_ENABLED=true
+MCP_RERANKING_PROVIDER=cohere
+MCP_RERANKING_API_KEY=your-cohere-api-key
+
+# Jina AI
+MCP_RERANKING_ENABLED=true
+MCP_RERANKING_PROVIDER=jina
+MCP_RERANKING_API_KEY=your-jina-api-key
+
+# Custom endpoint
+MCP_RERANKING_ENABLED=true
+MCP_RERANKING_PROVIDER=custom
+MCP_RERANKING_BASE_URL=https://your-reranker.example.com/v1
+MCP_RERANKING_API_KEY=your-api-key
+MCP_RERANKING_MODEL=your-model-name
 ```
 
-### When to use LLM search
-- Complex questions where context matters
-- Summaries and explanations
-- Comparisons across sections or documents
+### Request Timeouts
 
-### LLM search behavior
-- File mapping cache prevents re-uploading the same content
-- Only relevant sections are analyzed by the LLM provider
+The server supports configurable HTTP request timeouts to handle slow or unresponsive providers. All timeout values are in milliseconds.
 
-- Embedding models are downloaded on first use; some models require several hundred MB of downloads.
-- The `DocumentIndex` persists an index file and can be rebuilt if necessary.
-- The `EmbeddingCache` can be warmed by calling `process_uploads`, issuing curated queries, or using a preload API when available.
+**Timeout Hierarchy** (from highest to lowest priority):
+1. **Operation-specific timeout** (e.g., `MCP_AI_SEARCH_TIMEOUT_MS`)
+2. **Global timeout** (`MCP_REQUEST_TIMEOUT_MS`)
+3. **Default** (30000ms = 30 seconds)
 
-### Embedding Models
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MCP_REQUEST_TIMEOUT_MS` | Global timeout for all HTTP requests | `30000` |
+| `MCP_AI_SEARCH_TIMEOUT_MS` | Timeout for AI search requests (`search_documents_with_ai`) | Global timeout |
+| `MCP_EMBEDDING_TIMEOUT_MS` | Timeout for embedding generation requests | Global timeout |
 
-Embedding model selection depends on the provider:
+**Timeout Error Behavior:**
 
-- **Transformers.js (default)**: set `MCP_EMBEDDING_PROVIDER=transformers` and `MCP_EMBEDDING_MODEL`.
-  - **`Xenova/all-MiniLM-L6-v2`** (default) - Fast, good quality (384 dimensions)
-  - **`Xenova/paraphrase-multilingual-mpnet-base-v2`** (recommended) - Best quality, multilingual (768 dimensions)
-- **OpenAI-compatible (LM Studio / remote)**: set `MCP_EMBEDDING_PROVIDER=openai` and `MCP_EMBEDDING_BASE_URL`.
-  - Default model for LM Studio: `text-embedding-nomic-embed-text-v1.5`
+When a request exceeds its timeout, a `RequestTimeoutError` is thrown with details:
+- Error message includes the timeout duration and URL
+- The `isTimeout` property is set to `true` for programmatic detection
+- Provider health tracking marks the failure and may trigger fallback to other providers (in multi-provider mode)
 
-The system derives embedding dimensions from the selected provider (Transformers.js model metadata or OpenAI-compatible response length).
+**Example Configurations:**
 
-**Important**: Changing embedding provider or model requires re-adding all documents as embeddings are incompatible.
+```env
+# Fast local setup (15 second global timeout)
+MCP_REQUEST_TIMEOUT_MS=15000
 
+# Slow remote APIs (60 second global timeout)
+MCP_REQUEST_TIMEOUT_MS=60000
+
+# Different timeouts per operation
+MCP_REQUEST_TIMEOUT_MS=30000        # 30s default
+MCP_AI_SEARCH_TIMEOUT_MS=120000     # 2 min for AI search (slow LLMs)
+MCP_EMBEDDING_TIMEOUT_MS=45000      # 45s for embeddings
+```
+
+**Validation:**
+- Values must be positive integers (e.g., `30000`, not `30s`)
+- Non-numeric, zero, or negative values are rejected with a warning
+- Invalid values fall back to the next level in the hierarchy
+
+### LLM Provider Examples
+
+**LM Studio (local)**:
+```env
+MCP_AI_BASE_URL=http://localhost:1234
+MCP_AI_MODEL=ministral-3-8b-instruct-2512
+```
+
+**synthetic.new (remote)**:
+```env
+MCP_AI_BASE_URL=https://api.synthetic.new/openai/v1
+MCP_AI_API_KEY=your-api-key
+```
+
+## Troubleshooting
+
+### MCP Server Keeps Restarting
+
+**Symptom**: VS Code shows MCP server continuously restarting
+
+**Common causes**:
+- LanceDB data corruption in `~/.saga/lancedb/`
+- Embedding provider not running (e.g., LM Studio on port 1234)
+- Missing or incorrect environment variables
+
+**Solutions**:
+1. **Clear LanceDB data**: `rm -rf ~/.saga/lancedb/`
+2. **Verify embedding endpoint**:
+   ```bash
+   curl http://localhost:1234/v1/embeddings \
+     -H "Content-Type: application/json" \
+     -d '{"input": ["test"], "model": "llama-nemotron-embed-1b-v2"}'
+   ```
+3. **Check VS Code MCP logs**: Open Output panel → Select "MCP Documentation Server"
+4. **Restart VS Code** after applying fixes
+
+### LM Studio "Unexpected endpoint or method" Errors
+
+**Symptom**: LM Studio logs show repeated errors like:
+```
+Unexpected endpoint or method. (HEAD /). Returning 200 anyway
+```
+
+**Cause**: LM Studio is configured to use HTTP transport for the Saga MCP server, but Saga uses stdio transport by default. LM Studio attempts to ping an HTTP endpoint that doesn't exist.
+
+**Solutions**:
+1. **Configure LM Studio to use stdio transport**: Ensure your LM Studio MCP configuration uses `command` and `args` instead of HTTP URL
+2. **Example correct configuration**:
+   ```json
+   {
+     "mcpServers": {
+       "saga": {
+         "command": "node",
+         "args": ["/path/to/saga/dist/server.js"],
+         "env": {
+           "MCP_BASE_DIR": "~/.saga",
+           "MCP_EMBEDDING_PROVIDER": "openai",
+           "MCP_EMBEDDING_BASE_URL": "http://localhost:1234",
+           "MCP_EMBEDDING_MODEL": "llama-nemotron-embed-1b-v2"
+         }
+       }
+     }
+   }
+   ```
+3. **Note**: These errors are harmless and don't affect server functionality, but fixing the configuration will clean up the logs
+
+### Vector Index Creation Errors
+
+**Symptom**: Logs show warnings about vector index creation:
+```
+Failed to create vector index on chunks: Not enough rows to train PQ. Requires 256 rows but only 33 available
+```
+
+**Cause**: LanceDB's IVF_PQ indexing requires at least 256 vectors for Product Quantization training. Small datasets don't have enough data.
+
+**Solutions**:
+1. **No action needed**: The server gracefully handles this by skipping index creation for small datasets
+2. **Use HNSW indexing**: Set `MCP_USE_HNSW=true` (default) - HNSW works with any dataset size
+3. **Add more documents**: When your dataset grows beyond 256 vectors, indexes will be created automatically
+4. **Note**: Brute force search is efficient for small datasets (< 1000 vectors), so missing indexes won't impact performance
+
+### Graceful Degradation
+
+If the vector database fails to initialize, the server will continue running without vector search capabilities. Document management tools (add, list, delete) remain functional, but semantic search will be unavailable. Check the MCP logs to identify and resolve the underlying issue.
+
+### Reranking Issues
+
+**Symptom**: Search results don't use reranking despite being enabled
+
+**Common causes**:
+- Missing or invalid `MCP_RERANKING_API_KEY`
+- Reranking API endpoint unreachable
+- Timeout value too low for the provider
+
+**Solutions**:
+1. **Verify API key**: Ensure the API key is valid for your reranking provider
+2. **Check endpoint connectivity**:
+   ```bash
+   curl https://api.cohere.ai/v1/rerank \
+     -H "Authorization: Bearer YOUR_API_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{"query": "test", "documents": ["test"], "model": "rerank-multilingual-v3.0"}'
+   ```
+3. **Increase timeout**: Set `MCP_RERANKING_TIMEOUT` to a higher value (e.g., `60000` for 60 seconds)
+4. **Check MCP logs**: Look for reranking-related errors in the MCP server logs
+
+**Symptom**: Reranking causes search to be slow
+
+**Solutions**:
+1. **Reduce candidate pool**: Lower `MCP_RERANKING_CANDIDATES` (default: 50)
+2. **Disable for quick searches**: Set `MCP_RERANKING_ENABLED=false` for faster results
+3. **Use per-query override**: Pass `useReranking: false` in query options for specific queries
+
+**Note**: Reranking gracefully degrades to vector-only search if the reranking service is unavailable or times out.
+
+### LM Studio Embedding Model Loading Error
+
+**Symptom**: LM Studio shows an error when Saga tries to use embeddings:
+
+```
+Invalid model identifier 'text-embedding-llama-nemotron-embed-1b-v2@q4_k_s'. No matching loaded model found, and just-in-time (JIT) model loading is disabled. Ensure you have this model loaded first. JIT loading can be enabled in LM Studio Server Settings.
+```
+
+**Cause**: LM Studio has Just-In-Time (JIT) model loading disabled, which requires models to be pre-loaded before use. Saga requests the embedding model by name, but LM Studio cannot automatically load it because JIT loading is turned off.
+
+**Solutions**:
+
+#### Option 1: Enable JIT Model Loading (Recommended)
+
+Enable JIT loading in LM Studio Server Settings to allow automatic model loading:
+
+1. **Open LM Studio**
+2. **Go to Server Settings**:
+   - Click the "Server" tab in the left sidebar
+   - Click "Server Settings" (gear icon)
+3. **Enable JIT Loading**:
+   - Find the "JIT Model Loading" or "Just-In-Time Loading" option
+   - Toggle it to **Enabled**
+4. **Restart the LM Studio Server**:
+   - Stop the server (if running)
+   - Start it again
+5. **Verify the fix**:
+   - Try using Saga again
+   - The model should now load automatically when requested
+
+#### Option 2: Pre-load the Embedding Model
+
+If you prefer to keep JIT loading disabled, manually load the model first:
+
+1. **Open LM Studio**
+2. **Download the embedding model**:
+   - Search for "text-embedding-llama-nemotron-embed-1b-v2@q4_k_s" in the model marketplace
+   - Download and install the model
+3. **Load the model**:
+   - Go to the "Local Models" tab
+   - Find "text-embedding-llama-nemotron-embed-1b-v2@q4_k_s"
+   - Click "Load" or "Start" to load the model into memory
+4. **Keep the model loaded**:
+   - Ensure the model remains loaded while using Saga
+   - If LM Studio unloads the model, you'll need to reload it
+5. **Verify the fix**:
+   - Try using Saga again
+   - The model should now be available
+
+#### Recommended LM Studio Configuration for Saga
+
+For the best experience with Saga, configure LM Studio with these settings:
+
+```env
+# LM Studio Server Settings
+- Port: 1234 (or your preferred port)
+- JIT Model Loading: Enabled (recommended)
+- Host: 127.0.0.1 (localhost)
+- CORS: Enabled (if accessing from other applications)
+```
+
+**Why Enable JIT Loading?**
+- **Flexibility**: Automatically loads models as needed
+- **Convenience**: No need to manually pre-load models
+- **Resource Management**: Only loads models when they're actually used
+- **Better Experience**: Seamless integration with Saga and other MCP servers
+
+**Troubleshooting Tips**:
+
+1. **Check if the model is installed**:
+   - In LM Studio, go to "Local Models"
+   - Search for "text-embedding-llama-nemotron-embed-1b-v2@q4_k_s"
+   - If not found, download it from the marketplace
+
+2. **Verify LM Studio server is running**:
+   ```bash
+   curl http://localhost:1234/v1/models
+   ```
+   You should see a list of available models including the embedding model.
+
+3. **Test the embedding endpoint directly**:
+   ```bash
+   curl http://localhost:1234/v1/embeddings \
+     -H "Content-Type: application/json" \
+     -d '{"input": ["test"], "model": "llama-nemotron-embed-1b-v2"}'
+   ```
+
+4. **Check LM Studio logs**:
+   - Open LM Studio's log panel
+   - Look for errors related to model loading or JIT settings
+   - Verify the server is listening on the correct port
+
+5. **Restart LM Studio**:
+   - Sometimes a simple restart resolves configuration issues
+   - Stop the server, make changes, then start it again
+
+## Storage Layout
+
+```
+~/.saga/
+├── data/        # Document JSON files
+├── lancedb/     # Vector storage
+└── uploads/     # Drop files here to import
+```
 
 ## Development
 
 ```bash
-git clone https://github.com/maxinedotdev/saga.git
-cd saga
+npm run dev      # Development mode
+npm run build    # Build TypeScript
 ```
 
+### Testing
+
+The project uses Vitest for testing. Available test commands:
+
 ```bash
-npm run dev
-```
-```bash
-npm run build
-```
-```bash
-npm run inspect
+npm run test:unit        # Run unit tests only
+npm run test:integration # Run integration tests only
+npm run test:benchmark   # Run performance benchmarks
+npm run test:all         # Run all tests
+npm run test:watch       # Run tests in watch mode
+npm run test:coverage    # Run tests with coverage report
 ```
 
-### Branch conventions (local)
-- `develop` is the active integration branch
-- `staging` is the runtime branch; promote by merging `develop` via `./promote-to-staging.sh` (auto-stashes/restores local changes; use `--push` or `npm run promote:staging:push` to publish)
-- `main` tracks upstream and should remain clean locally
-- Switch back to the dev worktree with `./switch-to-develop.sh` or `npm run switch:develop` (auto-stashes/restores local changes)
+**Coverage Reporting:**
+- Coverage reports are generated in the `coverage/` directory
+- HTML reports can be opened at `coverage/index.html`
+- Coverage thresholds are enforced: 80% for statements, branches, functions, and lines
 
-### Local branch protection
-This repo includes local git hooks that block commits on `main`, block direct commits on `staging`, and block pushes to `main`.
-Run `scripts/setup-githooks.sh` to enable them for this clone.
+**CI/CD Integration:**
+- JUnit XML reports are generated for CI environments
+- Reports are saved to `test-results/junit.xml` when running in CI
+
+**Test Output Control:**
+- By default, console output from tests is suppressed to keep results clean and readable
+- To enable verbose output for debugging, set the `MCP_VERBOSE_TESTS` environment variable:
+  ```bash
+  MCP_VERBOSE_TESTS=true npm run test:all
+  ```
+- This is useful when debugging test failures or investigating specific test behavior
 
 ## Contributing
 
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/name`
-3. Follow [Conventional Commits](https://conventionalcommits.org/) for messages
+3. Follow [Conventional Commits](https://conventionalcommits.org/)
 4. Open a pull request
 
 ## License
 
 MIT - see [LICENSE](LICENSE) file
 
-## Support
-
-- [Documentation](https://github.com/maxinedotdev/saga)
-- [Report Issues](https://github.com/maxinedotdev/saga/issues)
-- [MCP Community](https://modelcontextprotocol.io/)
-
-## Acknowledgments
-
-This project was originally created by [@andrea9293](https://github.com/andrea9293). It has been forked and is now maintained by [maxinedotdev](https://github.com/maxinedotdev).
+---
 
 **Built with [FastMCP](https://github.com/punkpeye/fastmcp) and TypeScript**

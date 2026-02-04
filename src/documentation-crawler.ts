@@ -1,10 +1,16 @@
 import { DocumentManager } from './document-manager.js';
 import { normalizeText } from './utils.js';
 import { randomUUID } from 'crypto';
-import { convert } from 'html-to-text';
+import { decodeHtmlEntities, extractHtmlContent } from './html-extraction.js';
+import type { CodeBlock } from './types.js';
+import { detectLanguages, getAcceptedLanguages, getLanguageConfidenceThreshold, isLanguageAllowed, parseLanguageList } from './language-detection.js';
+import { fetchWithTimeout } from './utils/http-timeout.js';
 
 const DEFAULT_USER_AGENT = 'MCP-Documentation-Server/1.0';
 const MAX_SITEMAP_FETCHES = 10;
+const DEFAULT_CRAWL_TIMEOUT_MS = 15000;
+const DEFAULT_CRAWL_MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
+const DEFAULT_CRAWL_REQUEST_DELAY_MS = 0;
 
 type RobotsRules = {
     allows: string[];
@@ -17,18 +23,29 @@ type CrawlQueueItem = {
     depth: number;
 };
 
-export type CrawlOptions = {
+type CrawlOptions = {
     seedUrl: string;
     maxPages: number;
     maxDepth: number;
     sameDomainOnly: boolean;
+    accepted_languages?: string[]; // Override for MCP_ACCEPTED_LANGUAGES
 };
 
-export type CrawlResult = {
+type CrawlResult = {
     crawlId: string;
     pagesIngested: number;
     pagesSkipped: number;
     errors: Array<{ url: string; error: string }>;
+};
+
+/**
+ * Extracted content from a page including text, title, links, and code blocks
+ */
+type ExtractedContent = {
+    text: string;
+    title: string;
+    links: string[];
+    codeBlocks?: CodeBlock[];
 };
 
 export async function crawlDocumentation(
@@ -42,6 +59,14 @@ export async function crawlDocumentation(
     const robotsCache = new Map<string, RobotsRules>();
     const seedRobots = await getRobotsForOrigin(seedOrigin, robotsCache);
     const sitemapUrls = await collectSitemapUrls(seedRobots.sitemaps, seedOrigin);
+    const requestTimeoutMs = parsePositiveInt(process.env.MCP_CRAWL_TIMEOUT_MS, DEFAULT_CRAWL_TIMEOUT_MS);
+    const maxResponseBytes = parsePositiveInt(process.env.MCP_CRAWL_MAX_RESPONSE_BYTES, DEFAULT_CRAWL_MAX_RESPONSE_BYTES);
+    const requestDelayMs = parsePositiveInt(process.env.MCP_CRAWL_REQUEST_DELAY_MS, DEFAULT_CRAWL_REQUEST_DELAY_MS);
+
+    // Determine accepted languages for this crawl
+    // Use per-crawl override if provided, otherwise fall back to environment variable
+    const acceptedLanguages = options.accepted_languages ?? getAcceptedLanguages();
+    const confidenceThreshold = getLanguageConfidenceThreshold();
 
     const queue: CrawlQueueItem[] = [{ url: seed.toString(), depth: 0 }];
     const queued = new Set<string>([normalizeUrlForSet(seed)]);
@@ -97,12 +122,17 @@ export async function crawlDocumentation(
             continue;
         }
 
+        if (requestDelayMs > 0 && queueIndex > 1) {
+            await sleep(requestDelayMs);
+        }
+
         try {
-            const response = await fetch(parsedUrl.toString(), {
+            const response = await fetchWithTimeout(parsedUrl.toString(), {
                 headers: {
                     'User-Agent': DEFAULT_USER_AGENT,
                     'Accept': 'text/html, text/plain, text/markdown, application/json, application/xml;q=0.9, */*;q=0.1',
                 },
+                timeoutMs: requestTimeoutMs,
             });
 
             if (!response.ok) {
@@ -117,8 +147,18 @@ export async function crawlDocumentation(
                 continue;
             }
 
-            const body = await response.text();
-            const { text, title, links } = extractContent(body, contentType, parsedUrl);
+            let body: string;
+            try {
+                body = await readResponseTextWithLimit(response, maxResponseBytes);
+            } catch (error) {
+                pagesSkipped += 1;
+                errors.push({
+                    url: parsedUrl.toString(),
+                    error: error instanceof Error ? error.message : String(error),
+                });
+                continue;
+            }
+            const { text, title, links, codeBlocks } = extractContent(body, contentType, parsedUrl);
             const normalizedText = normalizeText(text);
 
             if (!normalizedText) {
@@ -126,15 +166,38 @@ export async function crawlDocumentation(
                 continue;
             }
 
-            await manager.addDocument(title, normalizedText, {
+            // Detect language and check allowlist before ingestion
+            const detectedLanguages = await detectLanguages(normalizedText, confidenceThreshold);
+            if (!isLanguageAllowed(detectedLanguages, acceptedLanguages)) {
+                console.warn(`[Crawler] Page rejected: language '${detectedLanguages.join(', ')}' not in accepted languages list (${parsedUrl.toString()})`);
+                pagesSkipped += 1;
+                continue;
+            }
+
+            const document = await manager.addDocument(title, normalizedText, {
                 source: 'crawl',
                 crawl_id: crawlId,
                 source_url: parsedUrl.toString(),
                 crawl_depth: depth,
                 fetched_at: new Date().toISOString(),
-                content_type: contentType || 'text/plain',
+                contentType: contentType || 'text/plain',
                 untrusted: true,
+                languages: detectedLanguages,
             });
+
+            // Skip if document was rejected by addDocument (e.g., language check)
+            if (!document) {
+                pagesSkipped += 1;
+                continue;
+            }
+
+            // Add code blocks if any were extracted
+            if (codeBlocks && codeBlocks.length > 0) {
+                await manager.addCodeBlocks(document.id, codeBlocks, {
+                    crawl_id: crawlId,
+                    source_url: parsedUrl.toString(),
+                });
+            }
 
             pagesIngested += 1;
 
@@ -220,6 +283,58 @@ function normalizeHostname(hostname: string): string {
 
 function normalizeContentType(contentType: string | null): string {
     return contentType ? contentType.split(';')[0].trim().toLowerCase() : '';
+}
+
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+    if (!value) return fallback;
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function sleep(ms: number): Promise<void> {
+    if (ms <= 0) return Promise.resolve();
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function readResponseTextWithLimit(response: Response, maxBytes: number): Promise<string> {
+    if (maxBytes > 0) {
+        const contentLength = response.headers.get('content-length');
+        if (contentLength) {
+            const size = Number.parseInt(contentLength, 10);
+            if (Number.isFinite(size) && size > maxBytes) {
+                throw new Error(`Response exceeded max size (${size} bytes > ${maxBytes} bytes)`);
+            }
+        }
+    }
+
+    if (!response.body || maxBytes <= 0) {
+        return response.text();
+    }
+
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        total += value.byteLength;
+        if (maxBytes > 0 && total > maxBytes) {
+            await reader.cancel();
+            throw new Error(`Response exceeded max size (${maxBytes} bytes)`);
+        }
+        chunks.push(value);
+    }
+
+    const merged = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+        merged.set(chunk, offset);
+        offset += chunk.byteLength;
+    }
+
+    return new TextDecoder('utf-8').decode(merged);
 }
 
 function isTextContentType(contentType: string): boolean {
@@ -452,13 +567,17 @@ function resolveUrl(value: string, origin: string): string | null {
     }
 }
 
-function extractContent(body: string, contentType: string, baseUrl: URL): { text: string; title: string; links: string[] } {
+function extractContent(body: string, contentType: string, baseUrl: URL): ExtractedContent {
     if (contentType === 'text/html' || contentType === 'application/xhtml+xml') {
-        const title = extractHtmlTitle(body) || deriveTitleFromUrl(baseUrl);
+        const extracted = extractHtmlContent(body, {
+            sourceUrl: baseUrl.toString(),
+            fallbackTitle: deriveTitleFromUrl(baseUrl),
+        });
         return {
-            text: stripHtml(body),
-            title,
-            links: extractHtmlLinks(body, baseUrl),
+            text: extracted.text,
+            title: extracted.title || deriveTitleFromUrl(baseUrl),
+            links: extracted.links,
+            codeBlocks: extracted.codeBlocks,
         };
     }
 
@@ -469,14 +588,6 @@ function extractContent(body: string, contentType: string, baseUrl: URL): { text
     };
 }
 
-function extractHtmlTitle(html: string): string {
-    const match = /<title[^>]*>([^<]*)<\/title>/i.exec(html);
-    if (!match) {
-        return '';
-    }
-    return decodeHtmlEntities(match[1]).trim();
-}
-
 function deriveTitleFromUrl(url: URL): string {
     const pathParts = url.pathname.split('/').filter(Boolean);
     if (pathParts.length > 0) {
@@ -485,62 +596,6 @@ function deriveTitleFromUrl(url: URL): string {
     return url.hostname;
 }
 
-function extractHtmlLinks(html: string, baseUrl: URL): string[] {
-    const links: string[] = [];
-    const regex = /href\s*=\s*["']([^"']+)["']/gi;
-    let match: RegExpExecArray | null;
-    while ((match = regex.exec(html)) !== null) {
-        const raw = match[1].trim();
-        if (!raw || raw.startsWith('#')) {
-            continue;
-        }
-        if (raw.startsWith('mailto:') || raw.startsWith('tel:') || raw.startsWith('javascript:') || raw.startsWith('data:')) {
-            continue;
-        }
-        const resolved = resolveUrl(raw, baseUrl.toString());
-        if (resolved) {
-            links.push(resolved);
-        }
-    }
-    return links;
-}
-
-function stripHtml(html: string): string {
-    // Use html-to-text library for proper HTML to text conversion
-    return convert(html, {
-        wordwrap: false, // Don't wrap lines at a specific width
-        preserveNewlines: true, // Preserve paragraph structure
-        selectors: [
-            // Skip navigation, headers, footers, and other non-content elements
-            { selector: 'nav', format: 'skip' },
-            { selector: 'header', format: 'skip' },
-            { selector: 'footer', format: 'skip' },
-            { selector: 'aside', format: 'skip' },
-            { selector: '[role="navigation"]', format: 'skip' },
-            { selector: '[role="banner"]', format: 'skip' },
-            { selector: '[role="contentinfo"]', format: 'skip' },
-            { selector: '[role="complementary"]', format: 'skip' },
-            { selector: 'script', format: 'skip' },
-            { selector: 'style', format: 'skip' },
-            { selector: 'noscript', format: 'skip' },
-            { selector: '.navigation', format: 'skip' },
-            { selector: '.nav', format: 'skip' },
-            { selector: '.sidebar', format: 'skip' },
-            { selector: '.menu', format: 'skip' },
-            { selector: '.breadcrumb', format: 'skip' },
-            { selector: '.pagination', format: 'skip' },
-            { selector: '.footer', format: 'skip' },
-            { selector: '.header', format: 'skip' },
-        ],
-    });
-}
-
-function decodeHtmlEntities(value: string): string {
-    return value
-        .replace(/&nbsp;/g, ' ')
-        .replace(/&amp;/g, '&')
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>');
-}
+// Export functions for testing
+export { extractHtmlCodeBlocks as extractCodeBlocks } from './html-extraction.js';
+export { normalizeLanguageTag } from './code-block-utils.js';

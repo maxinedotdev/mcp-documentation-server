@@ -1,0 +1,13 @@
+[project]
+name = "saga-mlx-reranker"
+version = "0.1.0"
+description = "MLX-based reranker for Saga MCP server"
+requires-python = ">=3.8"
+dependencies = [
+    "mlx>=0.20.0",
+    "mlx-lm>=0.20.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

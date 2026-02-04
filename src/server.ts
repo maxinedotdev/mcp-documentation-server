@@ -7,70 +7,318 @@ import { createLazyEmbeddingProvider } from './embedding-provider.js';
 import { DocumentManager } from './document-manager.js';
 import { resolveAiProviderSelection, searchDocumentWithAi } from './ai-search-provider.js';
 import { crawlDocumentation } from './documentation-crawler.js';
+import { extractHtmlContent, looksLikeHtml } from './html-extraction.js';
+import { getLogger } from './utils.js';
+import type { Document } from './types.js';
+
+const logger = getLogger('SagaServer');
+const getTimestamp = () => new Date().toISOString();
+
+logger.info(`${getTimestamp()} Server startup initiated`);
+logger.info(`Process ID: ${process.pid}`);
+logger.info(`Node version: ${process.version}`);
+logger.info(`Platform: ${process.platform}`);
+
+process.on('uncaughtException', (error: Error) => {
+    logger.error('UNCAUGHT EXCEPTION - Process will crash');
+    logger.error(error);
+});
+
+process.on('unhandledRejection', (reason: any) => {
+    logger.error('UNHANDLED REJECTION');
+    logger.error(reason instanceof Error ? reason : String(reason));
+});
+
+process.on('SIGTERM', () => {
+    logger.info('SIGTERM: Graceful shutdown initiated');
+});
+
+process.on('SIGINT', () => {
+    logger.info('SIGINT: Graceful shutdown initiated');
+});
+
+// ============================================
+// MLX AUTO-CONFIGURATION
+// ============================================
+async function initializeMlxAutoConfig() {
+    logger.info('MLX auto-configuration starting...');
+    
+    try {
+        // Import MLX-related modules
+        const { isAppleSilicon, logPlatformInfo } = await import('./reranking/apple-silicon-detection.js');
+        const { downloadModel, getDefaultModelPath } = await import('./reranking/model-downloader.js');
+        const { RERANKING_CONFIG } = await import('./reranking/config.js');
+        
+        // Log platform information
+        logPlatformInfo();
+        
+        // Only proceed if Apple Silicon is detected and MLX provider is configured
+        if (!isAppleSilicon()) {
+            logger.info('MLX auto-config skipped (not Apple Silicon)');
+            return;
+        }
+        
+        if (RERANKING_CONFIG.provider !== 'mlx') {
+            logger.info(`MLX auto-config skipped (provider: ${RERANKING_CONFIG.provider})`);
+            return;
+        }
+        
+        logger.info('MLX provider configured, checking model availability...');
+        
+        // Download model in background (don't block startup)
+        const modelPath = getDefaultModelPath();
+        logger.info(`MLX model path: ${modelPath}`);
+        
+        // Start download in background
+        downloadModel({ localPath: modelPath }, (progress) => {
+            if (progress.stage === 'downloading') {
+                logger.info(progress.message);
+            } else if (progress.stage === 'complete') {
+                logger.info(progress.message);
+            }
+        }).then((result) => {
+            if (result.success) {
+                logger.info(`MLX model ${result.downloaded ? 'downloaded' : 'already exists'} at ${result.modelPath}`);
+            } else {
+                logger.error(`MLX model setup failed: ${result.error}`);
+            }
+        }).catch((error) => {
+            logger.error(`MLX model setup failed: ${error}`);
+        });
+        
+    } catch (error) {
+        logger.error('MLX auto-configuration failed', error);
+    }
+}
+
+// Initialize MLX auto-configuration (non-blocking)
+initializeMlxAutoConfig();
+
+// ============================================
+// END MLX AUTO-CONFIGURATION
+// ============================================
 
 // Initialize server
+logger.info(`${getTimestamp()} About to create FastMCP server...`);
+
 const server = new FastMCP({
     name: "Documentation Server",
     version: "1.0.0",
 });
 
+logger.info('FastMCP server initialized');
+logger.info(`${getTimestamp()} FastMCP server created successfully`);
+
 // Initialize with default embedding provider
 let documentManager: DocumentManager;
 
 async function initializeDocumentManager() {
-    console.error('[Server] initializeDocumentManager START');
+    logger.info('initializeDocumentManager START');
     const startTime = Date.now();
 
     if (!documentManager) {
-        console.error('[Server] Creating new DocumentManager...');
+        logger.info('Creating new DocumentManager...');
         // Get embedding model from environment variable (provider handles defaults)
         const embeddingModel = process.env.MCP_EMBEDDING_MODEL;
-        console.error(`[Server] Embedding model: ${embeddingModel || 'default'}`);
+        logger.info(`Embedding model: ${embeddingModel || 'default'}`);
         const embeddingProvider = createLazyEmbeddingProvider(embeddingModel);
-        console.error('[Server] Embedding provider created');
+        logger.info('Embedding provider created');
 
           // Constructor will use default paths automatically
-        console.error('[Server] Calling DocumentManager constructor...');
+        logger.info('Calling DocumentManager constructor...');
         documentManager = new DocumentManager(embeddingProvider);
-        console.error(`[Server] Document manager initialized with: ${embeddingProvider.getModelName()} (lazy loading)`);
-        console.error(`[Server] Data directory: ${documentManager.getDataDir()}`);
-        console.error(`[Server] Uploads directory: ${documentManager.getUploadsDir()}`);
+        logger.info(`Document manager initialized with: ${embeddingProvider.getModelName()} (lazy loading)`);
+        logger.info(`Data directory: ${documentManager.getDataDir()}`);
+        logger.info(`Uploads directory: ${documentManager.getUploadsDir()}`);
     } else {
-        console.error('[Server] DocumentManager already exists, reusing');
+        logger.info('DocumentManager already exists, reusing');
     }
 
     const endTime = Date.now();
-    console.error(`[Server] initializeDocumentManager END - took ${endTime - startTime}ms`);
+    logger.info(`initializeDocumentManager END - took ${endTime - startTime}ms`);
     return documentManager;
 }
+
+function normalizeContentType(contentType?: string | null): string {
+    return contentType ? contentType.split(';')[0].trim().toLowerCase() : '';
+}
+
+function getMaxSearchResults(requested?: number): number {
+    const defaultLimit = parseInt(process.env.MCP_MAX_SEARCH_RESULTS || '10');
+    return requested ?? defaultLimit;
+}
+
+async function getVectorDatabase(manager: DocumentManager): Promise<any> {
+    await manager.ensureVectorDbReady();
+    const vectorDatabase = (manager as any).vectorDatabase;
+    if (!vectorDatabase) {
+        throw new Error('Vector database is not available.');
+    }
+    return vectorDatabase;
+}
+
+async function getDocumentOrThrow(manager: DocumentManager, documentId: string, notFoundMessage: string) {
+    const document = await manager.getDocument(documentId);
+    if (!document) {
+        throw new Error(notFoundMessage);
+    }
+    return document;
+}
+
+async function generateQueryEmbedding(manager: DocumentManager, query: string): Promise<number[]> {
+    const embeddingProvider = manager.getEmbeddingProvider();
+    return embeddingProvider.generateEmbedding(query);
+}
+
+function buildContextWindow(document: Document, chunkIndex: number, before: number, after: number) {
+    if (!document.chunks || !Array.isArray(document.chunks)) {
+        throw new Error('Document or chunk not found');
+    }
+    const total = document.chunks.length;
+    const start = Math.max(0, chunkIndex - before);
+    const end = Math.min(total, chunkIndex + after + 1);
+    const windowChunks = document.chunks.slice(start, end).map(chunk => ({
+        chunk_index: chunk.chunk_index,
+        content: chunk.content,
+    }));
+    return {
+        window: windowChunks,
+        center: chunkIndex,
+        total_chunks: total,
+    };
+}
+
+async function searchDocumentChunks(
+    manager: DocumentManager,
+    documentId: string,
+    query: string,
+    limit: number
+) {
+    await getDocumentOrThrow(
+        manager,
+        documentId,
+        `Document with ID '${documentId}' not found. Use 'list_documents' to get available document IDs.`
+    );
+    const vectorDatabase = await getVectorDatabase(manager);
+    const queryEmbedding = await generateQueryEmbedding(manager, query);
+    const filter = `document_id = '${documentId}'`;
+    const results = await vectorDatabase.search(queryEmbedding, limit, filter);
+
+    return {
+        hint_for_llm: "After identifying the relevant chunks, use get_document with chunk_window to retrieve additional context around each chunk of interest.",
+        results: results.map((result: any) => ({
+            document_id: result.chunk.document_id,
+            chunk_index: result.chunk.chunk_index,
+            score: result.score,
+            content: result.chunk.content,
+        })),
+    };
+}
+
+const addDocumentParams = z.object({
+    title: z.string().optional().describe("The title of the document"),
+    content: z.string().optional().describe("The content of the document"),
+    metadata: z.object({}).passthrough().optional().describe("Optional metadata for the document"),
+    source: z.enum(["uploads"]).optional().describe("Set to 'uploads' to read content from an uploads file"),
+    path: z.string().optional().describe("Path to a file in the uploads directory (used when source is 'uploads')"),
+}).superRefine((value, ctx) => {
+    if (value.source === 'uploads') {
+        if (!value.path) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "path is required when source is 'uploads'",
+                path: ['path'],
+            });
+        }
+    } else if (!value.title || !value.content) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "title and content are required unless source is 'uploads'",
+            path: ['title'],
+        });
+    }
+});
 
 // Add document tool
 server.addTool({
     name: "add_document",
-    description: "Add a new document to the knowledge base",
-    parameters: z.object({
-        title: z.string().describe("The title of the document"),
-        content: z.string().describe("The content of the document"),
-        metadata: z.object({}).passthrough().optional().describe("Optional metadata for the document"),
-    }), execute: async (args) => {
+    description: "Add a new document to the knowledge base. For test data, include metadata like { source: \"test\", test: true, tags: [\"test\"] } to make cleanup easy.",
+    parameters: addDocumentParams,
+    execute: async (args) => {
         try {
             const manager = await initializeDocumentManager();
-            const document = await manager.addDocument(
-                args.title,
-                args.content,
-                args.metadata || {}
+            const baseMetadata = args.metadata || {};
+            const metadata = { ...baseMetadata } as Record<string, any>;
+
+            if (args.source === 'uploads') {
+                if (args.title) {
+                    metadata.title = args.title;
+                }
+                const document = await manager.processUploadFile(args.path as string, metadata);
+                if (!document) {
+                    throw new Error('Failed to add document from uploads - document is null');
+                }
+                return `Document added successfully with ID: ${document.id}`;
+            }
+            if (!args.content) {
+                throw new Error('Missing content. Provide content or use source="uploads".');
+            }
+            const normalizedContentType = normalizeContentType(
+                (typeof metadata.contentType === 'string' ? metadata.contentType : undefined)
+                || (typeof metadata.content_type === 'string' ? metadata.content_type : undefined)
+                || (typeof metadata.mimeType === 'string' ? metadata.mimeType : undefined)
+                || (typeof metadata['content-type'] === 'string' ? metadata['content-type'] : undefined)
             );
+            const isHtml = normalizedContentType === 'text/html'
+                || normalizedContentType === 'application/xhtml+xml'
+                || looksLikeHtml(args.content);
+
+            let title = args.title ?? 'Untitled';
+            let content = args.content;
+            let codeBlocks: ReturnType<typeof extractHtmlContent>['codeBlocks'] = [];
+
+            if (isHtml) {
+                const sourceUrl = typeof metadata.source_url === 'string' ? metadata.source_url : undefined;
+                const extracted = extractHtmlContent(args.content, {
+                    sourceUrl,
+                    fallbackTitle: args.title,
+                });
+                title = extracted.title || args.title || 'Untitled';
+                content = extracted.text || args.content;
+                codeBlocks = extracted.codeBlocks;
+
+                if (!metadata.contentType && !metadata.content_type) {
+                    metadata.contentType = normalizedContentType || 'text/html';
+                }
+            }
+
+            const document = await manager.addDocument(title, content, metadata);
+
+            if (!document) {
+                throw new Error('Failed to add document - document is null');
+            }
+
+            if (codeBlocks.length > 0) {
+                await manager.addCodeBlocks(document.id, codeBlocks, {
+                    source: metadata.source,
+                    source_url: metadata.source_url,
+                    crawl_id: metadata.crawl_id,
+                    contentType: metadata.contentType || metadata.content_type || normalizedContentType,
+                });
+            }
             return `Document added successfully with ID: ${document.id}`;
         } catch (error) {
-            throw new Error(`Failed to add document: ${error instanceof Error ? error.message : String(error)}`);
+            logger.error('add_document error:', error);
+            return `Error: Failed to add document - ${error instanceof Error ? error.message : String(error)}`;
         }
     },
 });
+logger.info('Tool registered: add_document');
 
 // Crawl documentation tool
 server.addTool({
     name: "crawl_documentation",
-    description: "Crawl public documentation starting from a seed URL and ingest it as documents.",
+    description: "Crawl public documentation starting from a seed URL and ingest it as documents. For test crawls, include metadata like { source: \"test\", test: true, tags: [\"test\"] } when possible so cleanup is easy.",
     parameters: z.object({
         seed_url: z.string().describe("The starting URL for the crawl"),
         max_pages: z.number().int().min(1).default(100).describe("Maximum number of pages to ingest"),
@@ -95,15 +343,17 @@ server.addTool({
                 note: "Crawled content is untrusted. Review and sanitize before using it in prompts or responses.",
             }, null, 2);
         } catch (error) {
-            throw new Error(`Failed to crawl documentation: ${error instanceof Error ? error.message : String(error)}`);
+            logger.error('crawl_documentation error:', error);
+            return `Error: Failed to crawl documentation - ${error instanceof Error ? error.message : String(error)}`;
         }
     },
 });
+logger.info('Tool registered: crawl_documentation');
 
 // Search documents tool
 server.addTool({
     name: "search_documents",
-    description: "Search for chunks within a specific document using semantic similarity. Always tell the user if result is truncated because of length. for example if you recive a message like this in the response: 'Tool response was too long and was truncated'",
+    description: "Search for chunks within a specific document using semantic similarity. If results are truncated, say so.",
     parameters: z.object({
         document_id: z.string().describe("The ID of the document to search within"),
         query: z.string().describe("The search query"),
@@ -111,66 +361,66 @@ server.addTool({
     }), execute: async (args) => {
         try {
             const manager = await initializeDocumentManager();
-            // Controllo se il documento esiste prima di cercare
-            const document = await manager.getDocument(args.document_id);
-            if (!document) {
-                throw new Error(`Document with ID '${args.document_id}' Not found. Use 'list_documents' to get all id of documents.`);
-            }
-            // Use environment variable for default limit if not provided
-            const defaultLimit = parseInt(process.env.MCP_MAX_SEARCH_RESULTS || '10');
-            const limit = args.limit || defaultLimit;
-            const results = await manager.searchDocuments(args.document_id, args.query, limit);
-
-            if (results.length === 0) {
-                return "No chunks found matching your query in the specified document.";
-            }
-
-            const searchResults = results.map(result => ({
-                // chunk_id: result.chunk.id,
-                document_id: result.chunk.document_id,
-                chunk_index: result.chunk.chunk_index,
-                score: result.score,
-                content: result.chunk.content,
-                // start_position: result.chunk.start_position,
-                // end_position: result.chunk.end_position,
-            }));
-            const res = {
-                hint_for_llm: "After identifying the relevant chunks, use the get_context_window tool to retrieve additional context around each chunk of interest. You can call get_context_window multiple times until you have gathered enough context to answer the question.",
-                results: searchResults,
-            }
+            const limit = getMaxSearchResults(args.limit);
+            const res = await searchDocumentChunks(manager, args.document_id, args.query, limit);
             return JSON.stringify(res, null, 2);
         } catch (error) {
             throw new Error(`Search failed: ${error instanceof Error ? error.message : String(error)}`);
         }
     },
 });
+logger.info('Tool registered: search_documents');
 
 // Get document tool
 server.addTool({
     name: "get_document",
-    description: "Retrieve a specific document by ID. Always tell the user if result is truncated because of length. for example if you recive a message like this in the response: 'Tool response was too long and was truncated'",
+    description: "Retrieve a specific document by ID. If results are truncated, say so.",
     parameters: z.object({
         id: z.string().describe("The document ID"),
+        chunk_window: z.object({
+            chunk_index: z.number().describe("The index of the central chunk"),
+            before: z.number().default(1).describe("Number of previous chunks to include"),
+            after: z.number().default(1).describe("Number of next chunks to include"),
+        }).optional().describe("Optional context window around a chunk"),
     }), execute: async (args) => {
         try {
             const manager = await initializeDocumentManager();
-            const document = await manager.getOnlyContentDocument(args.id);
-
-            if (!document) {
-                return `Document with ID ${args.id} not found.`;
+            if (args.chunk_window) {
+                const document = await manager.getDocument(args.id);
+                if (!document) {
+                    throw new Error(`Document with ID '${args.id}' not found. Use 'list_documents' to get available document IDs.`);
+                }
+                const window = buildContextWindow(
+                    document,
+                    args.chunk_window.chunk_index,
+                    args.chunk_window.before ?? 1,
+                    args.chunk_window.after ?? 1
+                );
+                return JSON.stringify({
+                    document_id: document.id,
+                    title: document.title,
+                    ...window,
+                }, null, 2);
             }
 
-            return JSON.stringify(document, null, 2);
+            const content = await manager.getOnlyContentDocument(args.id);
+
+            if (!content) {
+                throw new Error(`Document with ID '${args.id}' not found. Use 'list_documents' to get available document IDs.`);
+            }
+
+            return JSON.stringify(content, null, 2);
         } catch (error) {
             throw new Error(`Failed to retrieve document: ${error instanceof Error ? error.message : String(error)}`);
         }
     },
 });
+logger.info('Tool registered: get_document');
 
 // List documents tool
 server.addTool({
     name: "list_documents",
-    description: "List documents in the knowledge base with pagination and optional metadata/preview",
+    description: "List documents in the knowledge base with pagination and optional metadata/preview.",
     parameters: z.object({
         offset: z.number().int().min(0).default(0).describe("Number of documents to skip for pagination"),
         limit: z.number().int().min(1).max(200).default(50).describe("Maximum number of documents to return (default 50, max 200)"),
@@ -210,13 +460,13 @@ server.addTool({
 // Get uploads folder path tool
 server.addTool({
     name: "get_uploads_path",
-    description: "Get the absolute path to the uploads folder where you can manually place .txt and .md files",
+    description: "Get the absolute path to the uploads folder where you can manually place .txt and .md files. For test runs, tag documents with metadata { source: \"test\", test: true, tags: [\"test\"] } when ingesting.",
     parameters: z.object({}),
     execute: async () => {
         try {
             const manager = await initializeDocumentManager();
             const uploadsPath = manager.getUploadsPath();
-            return `Uploads folder path: ${uploadsPath}\n\nYou can place .txt and .md files in this folder, then use the 'process_uploads' tool to create embeddings for them.`;
+            return `Uploads folder path: ${uploadsPath}\n\nYou can place .txt and .md files in this folder, then use the 'process_uploads' tool to create embeddings for them. For test runs, tag documents with metadata like { source: "test", test: true, tags: ["test"] } so cleanup is easy.`;
         } catch (error) {
             throw new Error(`Failed to get uploads path: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -226,7 +476,7 @@ server.addTool({
 // Process uploads folder tool
 server.addTool({
     name: "process_uploads",
-    description: "Process all .txt and .md files in the uploads folder and create embeddings for them",
+    description: "Process all .txt and .md files in the uploads folder and create embeddings for them. For test data, include metadata like { source: \"test\", test: true, tags: [\"test\"] } so cleanup is easy.",
     parameters: z.object({}), execute: async () => {
         try {
             const manager = await initializeDocumentManager();
@@ -250,7 +500,7 @@ server.addTool({
 // List uploads files tool
 server.addTool({
     name: "list_uploads_files",
-    description: "List all files in the uploads folder with their details",
+    description: "List all files in the uploads folder with their details.",
     parameters: z.object({}), execute: async () => {
         try {
             const manager = await initializeDocumentManager();
@@ -278,7 +528,7 @@ server.addTool({
 // Delete document tool
 server.addTool({
     name: "delete_document",
-    description: "Delete a document from the collection",
+    description: "Delete a document from the collection.",
     parameters: z.object({
         id: z.string().describe("Document ID to delete")
     }),
@@ -287,10 +537,11 @@ server.addTool({
             const manager = await initializeDocumentManager();
             
             // Check if document exists first
-            const document = await manager.getDocument(id);
-            if (!document) {
-                return `Document not found: ${id}`;
-            }
+            const document = await getDocumentOrThrow(
+                manager,
+                id,
+                `Document with ID '${id}' not found. Use 'list_documents' to get available document IDs.`
+            );
 
             // Delete the document
             const success = await manager.deleteDocument(id);
@@ -298,7 +549,7 @@ server.addTool({
             if (success) {
                 return `Document "${document.title}" (${id}) has been deleted successfully.`;
             } else {
-                return `Document not found or already deleted: ${id}`;
+                throw new Error(`Document with ID '${id}' not found or already deleted. Use 'list_documents' to get available document IDs.`);
             }
         } catch (error) {
             throw new Error(`Failed to delete document: ${error instanceof Error ? error.message : String(error)}`);
@@ -309,7 +560,7 @@ server.addTool({
 // Delete crawl session tool
 server.addTool({
     name: "delete_crawl_session",
-    description: "Delete all documents associated with a crawl session ID",
+    description: "Delete all documents associated with a crawl session ID.",
     parameters: z.object({
         crawl_id: z.string().describe("Crawl session ID to delete"),
     }),
@@ -339,7 +590,7 @@ server.addTool({
 // MCP tool: get_context_window
 server.addTool({
     name: "get_context_window",
-    description: "Returns a window of chunks around a central chunk given document_id, chunk_index, before, after. Always tell the user if result is truncated because of length. for example if you recive a message like this in the response: 'Tool response was too long and was truncated'",
+    description: "Return a window of chunks around a central chunk (document_id, chunk_index, before, after). If results are truncated, say so.",
     parameters: z.object({
         document_id: z.string().describe("The document ID"),
         chunk_index: z.number().describe("The index of the central chunk"),
@@ -348,31 +599,9 @@ server.addTool({
     }),
     async execute({ document_id, chunk_index, before, after }) {
         const manager = await initializeDocumentManager();
-        const document = await manager.getDocument(document_id);
-        if (!document || !document.chunks || !Array.isArray(document.chunks)) {
-            throw new Error("Document or chunk not found");
-        }
-        const total = document.chunks.length;
-        let windowChunks;
-        let range;
-        
-        const start = Math.max(0, chunk_index - before);
-        const end = Math.min(total, chunk_index + after + 1);
-        windowChunks = document.chunks.slice(start, end).map(chunk => ({
-            chunk_index: chunk.chunk_index,
-            content: chunk.content,
-            // start_position: chunk.start_position,
-            // end_position: chunk.end_position,
-            // type: chunk.metadata?.type || null
-        }));
-        range = [start, end - 1];
-        
-        return JSON.stringify({
-            window: windowChunks,
-            center: chunk_index,
-            // range,
-            total_chunks: total
-        }, null, 2);
+        const document = await getDocumentOrThrow(manager, document_id, 'Document or chunk not found');
+        const window = buildContextWindow(document, chunk_index, before, after);
+        return JSON.stringify(window, null, 2);
     }
 });
 
@@ -395,11 +624,12 @@ if (aiProviderSelection.enabled) {
                 }
 
                 // Check if document exists
-                const document = await manager.getDocument(args.document_id);
-                if (!document) {
-                    throw new Error(`Document with ID '${args.document_id}' not found. Use 'list_documents' to get available document IDs.`);
-                }
-                console.error(`[AISearch] Starting AI-powered search (${selection.provider}) for document ${args.document_id}`);
+                const document = await getDocumentOrThrow(
+                    manager,
+                    args.document_id,
+                    `Document with ID '${args.document_id}' not found. Use 'list_documents' to get available document IDs.`
+                );
+                logger.info(`AI-powered search (${selection.provider}) for document ${args.document_id}`);
 
                 // Perform AI search
                 const aiResult = await searchDocumentWithAi(
@@ -421,59 +651,166 @@ if (aiProviderSelection.enabled) {
             }
         },
     });
-    console.error(`[Server] AI search tool enabled (${aiProviderSelection.provider})`);
+    logger.info(`AI search tool enabled (${aiProviderSelection.provider})`);
 } else {
-    console.error(`[Server] AI search tool disabled (${aiProviderSelection.reason || 'provider not configured'})`);
+    logger.info(`AI search tool disabled (${aiProviderSelection.reason || 'provider not configured'})`);
 }
 
-// Performance and Statistics tool
-// server.addTool({
-//     name: "get_performance_stats",
-//     description: "Get performance statistics for indexing, caching, and scalability features",
-//     parameters: z.object({}),
-//     execute: async () => {
-//         try {
-//             const manager = await initializeDocumentManager();
-//             const stats = manager.getStats();
-            
-//             return JSON.stringify({
-//                 phase_1_scalability: {
-//                     indexing: stats.indexing || { enabled: false },
-//                     embedding_cache: stats.embedding_cache || { enabled: false },
-//                     parallel_processing: { enabled: stats.features.parallelProcessing },
-//                     streaming: { enabled: stats.features.streaming }
-//                 },
-//                 environment_variables: {
-//                     MCP_INDEXING_ENABLED: process.env.MCP_INDEXING_ENABLED || 'true',
-//                     MCP_CACHE_SIZE: process.env.MCP_CACHE_SIZE || '1000',
-//                     MCP_PARALLEL_ENABLED: process.env.MCP_PARALLEL_ENABLED || 'true',
-//                     MCP_MAX_WORKERS: process.env.MCP_MAX_WORKERS || '4',
-//                     MCP_STREAMING_ENABLED: process.env.MCP_STREAMING_ENABLED || 'true',
-//                     MCP_STREAM_CHUNK_SIZE: process.env.MCP_STREAM_CHUNK_SIZE || '65536',
-//                     MCP_STREAM_FILE_SIZE_LIMIT: process.env.MCP_STREAM_FILE_SIZE_LIMIT || '10485760'
-//                 },
-//                 description: 'Phase 1 scalability improvements: O(1) indexing, LRU caching, parallel processing, and streaming'
-//             }, null, 2);
-//         } catch (error) {
-//             throw new Error(`Failed to get performance stats: ${error instanceof Error ? error.message : String(error)}`);
-//         }
-//     },
-// });
+// Query documents tool
+server.addTool({
+    name: "query",
+    description: "Return the most relevant document IDs and summaries. Use this for query-first discovery before fetching full content. Set scope to 'document' with document_id to search chunks within a single document.",
+    parameters: z.object({
+        query: z.string().describe("The search query text"),
+        limit: z.number().int().min(1).max(200).default(10).describe("Maximum number of results to return (default 10, max 200)"),
+        offset: z.number().int().min(0).default(0).describe("Number of results to skip for pagination"),
+        include_metadata: z.boolean().default(true).describe("Include full metadata objects in results (default true)"),
+        scope: z.enum(["global", "document"]).optional().describe("Search scope (default: global unless document_id is provided)"),
+        document_id: z.string().optional().describe("Limit search to a specific document (requires scope: 'document')"),
+        filters: z.object({
+            tags: z.array(z.string()).optional().describe("Filter by document tags"),
+            source: z.string().optional().describe("Filter by document source (e.g., 'upload', 'crawl', 'api')"),
+            crawl_id: z.string().optional().describe("Filter by crawl session ID"),
+            author: z.string().optional().describe("Filter by document author"),
+            contentType: z.string().optional().describe("Filter by content type"),
+            languages: z.array(z.string()).optional().describe("Filter by language codes (ISO 639-1, e.g., 'en', 'es', 'fr'). Defaults to MCP_DEFAULT_QUERY_LANGUAGES or MCP_ACCEPTED_LANGUAGES if not specified."),
+        }).optional().describe("Optional metadata filters to apply"),
+    }),
+    execute: async (args) => {
+        try {
+            const manager = await initializeDocumentManager();
+            const scope = args.scope ?? (args.document_id ? 'document' : 'global');
+            if (scope === 'document') {
+                if (!args.document_id) {
+                    throw new Error("document_id is required when scope is 'document'");
+                }
+                const limit = getMaxSearchResults(args.limit);
+                const res = await searchDocumentChunks(manager, args.document_id, args.query, limit);
+                return JSON.stringify(res, null, 2);
+            }
 
-// Add resource for document access
-// server.addResource({
-//     name: "Documents Database",
-//     uri: "file://./data",
-//     mimeType: "application/json", async load() {
-//         const manager = await initializeDocumentManager();
-//         const documents = await manager.getAllDocuments();
-//         return {
-//             text: JSON.stringify(documents, null, 2),
-//         };
-//     },
-// });
+            const result = await manager.query(args.query, {
+                limit: args.limit,
+                offset: args.offset,
+                include_metadata: args.include_metadata,
+                filters: args.filters ?? {},
+            });
+
+            return JSON.stringify(result, null, 2);
+        } catch (error) {
+            throw new Error(`Query failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    },
+});
+
+// Search code blocks tool
+server.addTool({
+    name: "search_code_blocks",
+    description: "Search for code blocks across all documents using semantic similarity. Returns all language variants by default. Use the optional language filter to restrict results to a specific programming language. If results are truncated, say so.",
+    parameters: z.object({
+        query: z.string().describe("The search query for finding relevant code blocks"),
+        limit: z.number().optional().describe("Maximum number of code block results to return (defaults to MCP_MAX_SEARCH_RESULTS env var or 10)"),
+        language: z.string().optional().describe("Optional language filter to restrict results to a specific programming language (e.g., 'javascript', 'python', 'typescript'). If not specified, returns results from all languages."),
+    }),
+    execute: async (args) => {
+        try {
+            const manager = await initializeDocumentManager();
+            
+            const vectorDatabase = await getVectorDatabase(manager);
+            const queryEmbedding = await generateQueryEmbedding(manager, args.query);
+            const limit = getMaxSearchResults(args.limit);
+
+            const results = await vectorDatabase.searchCodeBlocks(queryEmbedding, limit, args.language);
+
+            if (results.length === 0) {
+                return args.language
+                    ? `No code blocks found matching your query in ${args.language}. Try searching without a language filter to see all available code blocks.`
+                    : "No code blocks found matching your query.";
+            }
+
+            const searchResults = results.map((result: any) => ({
+                document_id: result.code_block.document_id,
+                block_id: result.code_block.block_id,
+                block_index: result.code_block.block_index,
+                language: result.code_block.language,
+                score: result.score,
+                content: result.code_block.content,
+                source_url: result.code_block.source_url,
+            }));
+
+            const res = {
+                query: args.query,
+                language_filter: args.language || null,
+                hint_for_llm: "Code block search results include all language variants by default. Use the optional language parameter to filter for specific programming languages. Each result is a separate code block variant.",
+                results: searchResults,
+            };
+
+            return JSON.stringify(res, null, 2);
+        } catch (error) {
+            throw new Error(`Code block search failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    },
+});
+
+// Get code blocks for document tool
+server.addTool({
+    name: "get_code_blocks",
+    description: "Get all code blocks for a specific document. Returns all language variants available for each code block. If results are truncated, say so.",
+    parameters: z.object({
+        document_id: z.string().describe("The ID of the document to get code blocks for"),
+    }),
+    execute: async (args) => {
+        try {
+            const manager = await initializeDocumentManager();
+            
+            const vectorDatabase = await getVectorDatabase(manager);
+            const document = await getDocumentOrThrow(
+                manager,
+                args.document_id,
+                `Document with ID '${args.document_id}' not found. Use 'list_documents' to get available document IDs.`
+            );
+
+            const codeBlocks = await vectorDatabase.getCodeBlocksByDocument(args.document_id);
+
+            if (codeBlocks.length === 0) {
+                return `No code blocks found for document '${args.document_id}'. This document may not have been crawled with code block extraction enabled, or it may not contain any code blocks.`;
+            }
+
+            // Group code blocks by block_id to show variants
+            const groupedBlocks: Record<string, any[]> = {};
+            for (const block of codeBlocks) {
+                if (!groupedBlocks[block.block_id]) {
+                    groupedBlocks[block.block_id] = [];
+                }
+                groupedBlocks[block.block_id].push({
+                    language: block.language,
+                    content: block.content,
+                    block_index: block.block_index,
+                    source_url: block.source_url,
+                });
+            }
+
+            const res = {
+                document_id: args.document_id,
+                document_title: document.title,
+                total_code_blocks: codeBlocks.length,
+                unique_code_block_groups: Object.keys(groupedBlocks).length,
+                hint_for_llm: "Code blocks are grouped by block_id. Each group contains all available language variants for that code block.",
+                code_blocks: groupedBlocks,
+            };
+
+            return JSON.stringify(res, null, 2);
+        } catch (error) {
+            throw new Error(`Failed to get code blocks: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    },
+});
 
 // Start the server
+logger.info(`${getTimestamp()} About to start server with stdio transport...`);
+
 server.start({
     transportType: "stdio",
 });
+
+logger.info(`${getTimestamp()} Server started successfully!`);

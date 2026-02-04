@@ -6,15 +6,16 @@ import { createHash } from 'crypto';
  */
 export class EmbeddingCache {
     private cache: Map<string, {embedding: number[], timestamp: number, accessCount: number}>;
-    private accessOrder: string[] = []; // Track access order for LRU eviction
     private maxSize: number;
     private hits = 0;
     private misses = 0;
+    private modelIdentifier: string;
 
-    constructor(maxSize?: number) {
+    constructor(maxSize?: number, modelIdentifier?: string) {
         this.maxSize = maxSize || parseInt(process.env.MCP_CACHE_SIZE || '1000');
+        this.modelIdentifier = modelIdentifier || process.env.MCP_EMBEDDING_MODEL || 'default';
         this.cache = new Map();
-        console.error(`[EmbeddingCache] Initialized with size: ${this.maxSize}`);
+        console.error(`[EmbeddingCache] Initialized with size: ${this.maxSize}, model: ${this.modelIdentifier}`);
     }
 
     /**
@@ -29,8 +30,9 @@ export class EmbeddingCache {
             cached.timestamp = Date.now();
             cached.accessCount++;
             
-            // Move to end of access order (most recently used)
-            this.updateAccessOrder(hash);
+            // Move to end (most recently used)
+            this.cache.delete(hash);
+            this.cache.set(hash, cached);
             
             this.hits++;
             return cached.embedding;
@@ -45,55 +47,60 @@ export class EmbeddingCache {
      */
     async setEmbedding(text: string, embedding: number[]): Promise<void> {
         const hash = this.hash(text);
-        
-        // Check if we need to evict before adding
-        if (this.cache.size >= this.maxSize && !this.cache.has(hash)) {
-            this.evictLRU();
-        }
-        
+
         // Store the embedding
+        if (this.cache.has(hash)) {
+            this.cache.delete(hash);
+        }
+
         this.cache.set(hash, {
             embedding: [...embedding], // Create a copy to avoid reference issues
             timestamp: Date.now(),
             accessCount: 1
         });
         
-        // Update access order
-        this.updateAccessOrder(hash);
-    }
-
-    /**
-     * Update access order for LRU tracking
-     */
-    private updateAccessOrder(hash: string): void {
-        // Remove from current position
-        const currentIndex = this.accessOrder.indexOf(hash);
-        if (currentIndex !== -1) {
-            this.accessOrder.splice(currentIndex, 1);
+        // Evict least recently used items if needed
+        while (this.cache.size > this.maxSize) {
+            this.evictLRU();
         }
-        
-        // Add to end (most recently used)
-        this.accessOrder.push(hash);
     }
 
     /**
      * Evict least recently used item
      */
     private evictLRU(): void {
-        if (this.accessOrder.length === 0) return;
-        
-        const lruHash = this.accessOrder.shift()!;
-        this.cache.delete(lruHash);
+        const lruKey = this.cache.keys().next().value;
+        if (lruKey === undefined) {
+            return;
+        }
+        this.cache.delete(lruKey);
     }
 
     /**
      * Create hash of text for cache key
+     * Includes model identifier to ensure cache isolation between models
      */
     private hash(text: string): string {
         return createHash('sha256')
-            .update(text.trim().toLowerCase())
+            .update(`${this.modelIdentifier}:${text.trim().toLowerCase()}`)
             .digest('hex')
             .substring(0, 16);
+    }
+
+    /**
+     * Update the model identifier for cache key generation
+     * Useful when switching models dynamically
+     */
+    setModelIdentifier(modelIdentifier: string): void {
+        this.modelIdentifier = modelIdentifier;
+        console.error(`[EmbeddingCache] Model identifier updated to: ${modelIdentifier}`);
+    }
+
+    /**
+     * Get the current model identifier
+     */
+    getModelIdentifier(): string {
+        return this.modelIdentifier;
     }
 
     /**
@@ -123,7 +130,6 @@ export class EmbeddingCache {
      */
     clear(): void {
         this.cache.clear();
-        this.accessOrder = [];
         this.hits = 0;
         this.misses = 0;
     }
@@ -210,9 +216,56 @@ export class EmbeddingCache {
                 timestamp: entry.timestamp,
                 accessCount: entry.accessCount
             });
-            this.accessOrder.push(entry.hash);
         }
         
         console.error(`[EmbeddingCache] Imported ${this.cache.size} cached embeddings`);
     }
 }
+
+// ============================================================================
+// Singleton Pattern Implementation
+// ============================================================================
+
+/**
+ * Module-level singleton instance of EmbeddingCache
+ * This ensures cache persists across provider instances
+ */
+let globalEmbeddingCache: EmbeddingCache | null = null;
+let globalCacheConfig: { maxSize?: number; modelIdentifier?: string } | null = null;
+
+/**
+ * Factory function that returns the singleton EmbeddingCache instance
+ * Creates the cache on first call and reuses it thereafter
+ * @param maxSize Optional maximum cache size (only used on first creation)
+ * @param modelIdentifier Optional model identifier for cache key isolation
+ * @returns The singleton EmbeddingCache instance
+ */
+export function getEmbeddingCache(maxSize?: number, modelIdentifier?: string): EmbeddingCache {
+    const currentConfig = { maxSize, modelIdentifier };
+    
+    // Return cached instance if config hasn't changed
+    if (globalEmbeddingCache && 
+        globalCacheConfig?.maxSize === maxSize && 
+        globalCacheConfig?.modelIdentifier === modelIdentifier) {
+        return globalEmbeddingCache;
+    }
+    
+    // If cache exists but config changed, update the model identifier
+    if (globalEmbeddingCache && modelIdentifier) {
+        globalEmbeddingCache.setModelIdentifier(modelIdentifier);
+        globalCacheConfig = currentConfig;
+        return globalEmbeddingCache;
+    }
+    
+    // Create new singleton instance
+    globalEmbeddingCache = new EmbeddingCache(maxSize, modelIdentifier);
+    globalCacheConfig = currentConfig;
+    
+    console.error('[EmbeddingCache] Singleton instance created');
+    return globalEmbeddingCache;
+}
+
+/**
+ * Clear the global embedding cache singleton
+ * Useful for testing or when configuration changes significantly
+ */

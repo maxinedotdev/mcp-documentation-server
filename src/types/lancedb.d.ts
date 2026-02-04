@@ -1,6 +1,6 @@
 /**
- * Type declarations for optional lancedb dependency
- * This allows TypeScript to compile even when lancedb is not installed
+ * LEGACY: type declarations for optional lancedb dependency.
+ * Kept for compatibility with older code paths; do not use for LanceDBV1.
  */
 
 declare module "lancedb" {
