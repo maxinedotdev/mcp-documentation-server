@@ -320,8 +320,9 @@ Existing documents need to be re-imported.
 
 1. Bump `package.json` and update `CHANGELOG.md` on `develop`.
 2. Merge `develop` into `main`.
-3. GitHub Actions publishes to npm on every `main` push **when `package.json` changes**.
-4. Optionally create a GitHub Release with notes.
+3. GitHub Actions runs unit tests only (no external AI dependencies).
+4. GitHub Actions publishes to npm on every `main` push **when `package.json` changes**.
+5. Optionally create a GitHub Release with notes.
 
 ## Project Structure
 

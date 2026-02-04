@@ -22,4 +22,8 @@ jobs:
 
       - run: npm ci
       - run: npm run build
-      - run: npm run test:all
+      - name: Run unit tests (no external AI)
+        env:
+          MCP_USE_MOCK_EMBEDDINGS: 'true'
+          MCP_FORCE_STUB_FETCH: 'true'
+        run: npm run test:unit
