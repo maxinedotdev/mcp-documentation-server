@@ -1,3 +1,6 @@
+![GitHub Release](https://img.shields.io/github/v/release/cvntress/saga)
+![npm version](https://img.shields.io/npm/v/saga-mcp)
+
 # Saga MCP Server
 
 [![npm publish](https://github.com/maxinedotdev/saga/actions/workflows/npm-publish.yml/badge.svg)](https://github.com/maxinedotdev/saga/actions/workflows/npm-publish.yml)
