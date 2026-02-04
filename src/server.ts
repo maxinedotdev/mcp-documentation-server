@@ -218,6 +218,33 @@ function normalizeContentType(contentType?: string | null): string {
     return contentType ? contentType.split(';')[0].trim().toLowerCase() : '';
 }
 
+function getMaxSearchResults(requested?: number): number {
+    const defaultLimit = parseInt(process.env.MCP_MAX_SEARCH_RESULTS || '10');
+    return requested ?? defaultLimit;
+}
+
+async function getVectorDatabase(manager: DocumentManager): Promise<any> {
+    await manager.ensureVectorDbReady();
+    const vectorDatabase = (manager as any).vectorDatabase;
+    if (!vectorDatabase) {
+        throw new Error('Vector database is not available.');
+    }
+    return vectorDatabase;
+}
+
+async function getDocumentOrThrow(manager: DocumentManager, documentId: string, notFoundMessage: string) {
+    const document = await manager.getDocument(documentId);
+    if (!document) {
+        throw new Error(notFoundMessage);
+    }
+    return document;
+}
+
+async function generateQueryEmbedding(manager: DocumentManager, query: string): Promise<number[]> {
+    const embeddingProvider = manager.getEmbeddingProvider();
+    return embeddingProvider.generateEmbedding(query);
+}
+
 // Add document tool
 server.addTool({
     name: "add_document",
@@ -330,24 +357,18 @@ server.addTool({
         try {
             const manager = await initializeDocumentManager();
             // Controllo se il documento esiste prima di cercare
-            const document = await manager.getDocument(args.document_id);
-            if (!document) {
-                throw new Error(`Document with ID '${args.document_id}' Not found. Use 'list_documents' to get all id of documents.`);
-            }
-            // Use environment variable for default limit if not provided
-            const defaultLimit = parseInt(process.env.MCP_MAX_SEARCH_RESULTS || '10');
-            const limit = args.limit || defaultLimit;
-            
+            await getDocumentOrThrow(
+                manager,
+                args.document_id,
+                `Document with ID '${args.document_id}' Not found. Use 'list_documents' to get all id of documents.`
+            );
+            const limit = getMaxSearchResults(args.limit);
+
             // Search within a specific document using vector database
-            await manager.ensureVectorDbReady();
-            const vectorDatabase = (manager as any).vectorDatabase;
-            if (!vectorDatabase) {
-                throw new Error('Vector database is not available.');
-            }
-            
+            const vectorDatabase = await getVectorDatabase(manager);
+
             // Generate query embedding using documentManager's embedding provider
-            const embeddingProvider = manager.getEmbeddingProvider();
-            const queryEmbedding = await embeddingProvider.generateEmbedding(args.query);
+            const queryEmbedding = await generateQueryEmbedding(manager, args.query);
             
             // Search with document filter
             const filter = `document_id = '${args.document_id}'`;
@@ -521,10 +542,11 @@ server.addTool({
             const manager = await initializeDocumentManager();
             
             // Check if document exists first
-            const document = await manager.getDocument(id);
-            if (!document) {
-                throw new Error(`Document with ID '${id}' not found. Use 'list_documents' to get available document IDs.`);
-            }
+            const document = await getDocumentOrThrow(
+                manager,
+                id,
+                `Document with ID '${id}' not found. Use 'list_documents' to get available document IDs.`
+            );
 
             // Delete the document
             const success = await manager.deleteDocument(id);
@@ -582,8 +604,8 @@ server.addTool({
     }),
     async execute({ document_id, chunk_index, before, after }) {
         const manager = await initializeDocumentManager();
-        const document = await manager.getDocument(document_id);
-        if (!document || !document.chunks || !Array.isArray(document.chunks)) {
+        const document = await getDocumentOrThrow(manager, document_id, 'Document or chunk not found');
+        if (!document.chunks || !Array.isArray(document.chunks)) {
             throw new Error("Document or chunk not found");
         }
         const total = document.chunks.length;
@@ -629,10 +651,11 @@ if (aiProviderSelection.enabled) {
                 }
 
                 // Check if document exists
-                const document = await manager.getDocument(args.document_id);
-                if (!document) {
-                    throw new Error(`Document with ID '${args.document_id}' not found. Use 'list_documents' to get available document IDs.`);
-                }
+                const document = await getDocumentOrThrow(
+                    manager,
+                    args.document_id,
+                    `Document with ID '${args.document_id}' not found. Use 'list_documents' to get available document IDs.`
+                );
                 console.error(`[AISearch] Starting AI-powered search (${selection.provider}) for document ${args.document_id}`);
 
                 // Perform AI search
@@ -710,21 +733,9 @@ server.addTool({
         try {
             const manager = await initializeDocumentManager();
             
-            // Ensure vector database is ready
-            await manager.ensureVectorDbReady();
-            
-            const vectorDatabase = (manager as any).vectorDatabase;
-            if (!vectorDatabase) {
-                throw new Error('Vector database is not available.');
-            }
-            
-            // Generate query embedding using documentManager's embedding provider
-            const embeddingProvider = manager.getEmbeddingProvider();
-            const queryEmbedding = await embeddingProvider.generateEmbedding(args.query);
-            
-            // Use environment variable for default limit if not provided
-            const defaultLimit = parseInt(process.env.MCP_MAX_SEARCH_RESULTS || '10');
-            const limit = args.limit || defaultLimit;
+            const vectorDatabase = await getVectorDatabase(manager);
+            const queryEmbedding = await generateQueryEmbedding(manager, args.query);
+            const limit = getMaxSearchResults(args.limit);
 
             const results = await vectorDatabase.searchCodeBlocks(queryEmbedding, limit, args.language);
 
@@ -769,19 +780,12 @@ server.addTool({
         try {
             const manager = await initializeDocumentManager();
             
-            // Ensure vector database is ready
-            await manager.ensureVectorDbReady();
-            
-            const vectorDatabase = (manager as any).vectorDatabase;
-            if (!vectorDatabase) {
-                throw new Error('Vector database is not available.');
-            }
-            
-            // Check if document exists
-            const document = await manager.getDocument(args.document_id);
-            if (!document) {
-                throw new Error(`Document with ID '${args.document_id}' not found. Use 'list_documents' to get available document IDs.`);
-            }
+            const vectorDatabase = await getVectorDatabase(manager);
+            const document = await getDocumentOrThrow(
+                manager,
+                args.document_id,
+                `Document with ID '${args.document_id}' not found. Use 'list_documents' to get available document IDs.`
+            );
 
             const codeBlocks = await vectorDatabase.getCodeBlocksByDocument(args.document_id);
 
