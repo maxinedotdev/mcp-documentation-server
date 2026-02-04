@@ -23,7 +23,8 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "tsc && shx chmod +x dist/*.js",
+    "clean": "rm -rf dist",
+    "build": "npm run clean && tsc -p tsconfig.build.json && shx chmod +x dist/*.js",
     "start": "tsx src/server.ts",
     "dev": "fastmcp dev src/server.ts",
     "dev:direct": "npx tsx src/server.ts",
