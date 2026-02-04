@@ -800,6 +800,41 @@ export class LanceDBV1 implements ValidationDatabase {
      * @param chunks - Chunks to add
      * @param batchSize - Batch size for insertion (default: 1000)
      */
+    private async addEmbeddableRows<T extends { embedding?: number[]; id?: string }>(
+        rows: Array<T>,
+        table: LanceTable,
+        label: string,
+        batchSize: number
+    ): Promise<void> {
+        const validRows = rows.filter((row) => (row.embedding ?? []).length > 0);
+        if (validRows.length === 0) {
+            logger.warn(`Skipped ${label}: no rows with embeddings provided`);
+            return;
+        }
+
+        if (validRows.length !== rows.length) {
+            logger.warn(`Skipped ${rows.length - validRows.length} ${label} without embeddings`);
+        }
+
+        const now = getCurrentTimestamp();
+
+        const labelKey = label.replace(/\s+/g, '');
+
+        await withRetry(async () => {
+            for (let i = 0; i < validRows.length; i += batchSize) {
+                const batch = validRows.slice(i, i + batchSize);
+                const rowsWithIds = batch.map(row => ({
+                    ...row,
+                    id: row.id ?? generateUUID(),
+                    created_at: now
+                })) as Array<T & { id: string; created_at: string }>;
+
+                await table.add(rowsWithIds);
+                logger.debug(`Added ${rowsWithIds.length} ${label} (batch ${Math.floor(i / batchSize) + 1})`);
+            }
+        }, `add${labelKey}`);
+    }
+
     async addChunks(
         chunks: Array<Omit<ChunkV1, 'created_at' | 'id'> & { id?: string }>,
         batchSize: number = 1000
@@ -808,31 +843,7 @@ export class LanceDBV1 implements ValidationDatabase {
             throw new Error('Database not initialized');
         }
 
-        const validChunks = chunks.filter((chunk) => (chunk.embedding ?? []).length > 0);
-        if (validChunks.length === 0) {
-            logger.warn('Skipped addChunks: no chunks with embeddings provided');
-            return;
-        }
-
-        if (validChunks.length !== chunks.length) {
-            logger.warn(`Skipped ${chunks.length - validChunks.length} chunks without embeddings`);
-        }
-
-        const now = getCurrentTimestamp();
-        
-        return withRetry(async () => {
-            for (let i = 0; i < validChunks.length; i += batchSize) {
-                const batch = validChunks.slice(i, i + batchSize);
-                const chunksWithIds: ChunkV1[] = batch.map(chunk => ({
-                    ...chunk,
-                    id: chunk.id ?? generateUUID(),
-                    created_at: now
-                }));
-                
-                await this.chunksTable!.add(chunksWithIds);
-                logger.debug(`Added ${chunksWithIds.length} chunks (batch ${Math.floor(i / batchSize) + 1})`);
-            }
-        }, 'addChunks');
+        await this.addEmbeddableRows(chunks, this.chunksTable!, 'chunks', batchSize);
     }
     
     /**
@@ -849,31 +860,7 @@ export class LanceDBV1 implements ValidationDatabase {
             throw new Error('Database not initialized');
         }
 
-        const validBlocks = blocks.filter((block) => (block.embedding ?? []).length > 0);
-        if (validBlocks.length === 0) {
-            logger.warn('Skipped addCodeBlocks: no code blocks with embeddings provided');
-            return;
-        }
-
-        if (validBlocks.length !== blocks.length) {
-            logger.warn(`Skipped ${blocks.length - validBlocks.length} code blocks without embeddings`);
-        }
-
-        const now = getCurrentTimestamp();
-        
-        return withRetry(async () => {
-            for (let i = 0; i < validBlocks.length; i += batchSize) {
-                const batch = validBlocks.slice(i, i + batchSize);
-                const blocksWithIds: CodeBlockV1[] = batch.map(block => ({
-                    ...block,
-                    id: block.id ?? generateUUID(),
-                    created_at: now
-                }));
-                
-                await this.codeBlocksTable!.add(blocksWithIds);
-                logger.debug(`Added ${blocksWithIds.length} code blocks (batch ${Math.floor(i / batchSize) + 1})`);
-            }
-        }, 'addCodeBlocks');
+        await this.addEmbeddableRows(blocks, this.codeBlocksTable!, 'code blocks', batchSize);
     }
 
     /**

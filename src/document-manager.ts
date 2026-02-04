@@ -15,6 +15,7 @@ import { getRerankingConfig, isRerankingEnabled } from './reranking/config.js';
 import type { ChunkV1, CodeBlockV1, DocumentTagV1, DocumentV1 } from './types/database-v1.js';
 
 const logger = getLogger('DocumentManager');
+const SUPPORTED_UPLOAD_EXTENSIONS = ['.txt', '.md', '.pdf'] as const;
 
 /**
  * Document manager that handles document operations with chunking, indexing, and embeddings
@@ -673,75 +674,72 @@ export class DocumentManager {
         }
     }
 
+    private async collectUploadFiles(): Promise<string[]> {
+        const { readdir, stat, realpath } = await import('fs/promises');
+        const files: string[] = [];
+        const visitedDirs = new Set<string>();
+        const MAX_DEPTH = 10;
+
+        const findFilesRecursive = async (dir: string, depth: number = 0) => {
+            if (depth > MAX_DEPTH) {
+                logger.warn(`Reached maximum depth (${MAX_DEPTH}), skipping: ${dir}`);
+                return;
+            }
+
+            const realPath = await realpath(dir).catch(() => dir);
+            if (visitedDirs.has(realPath)) {
+                logger.warn(`Skipping already visited directory (cycle detected): ${realPath}`);
+                return;
+            }
+            visitedDirs.add(realPath);
+
+            const entries = await readdir(dir, { withFileTypes: true });
+            for (const entry of entries) {
+                const fullPath = path.join(dir, entry.name);
+                if (entry.isSymbolicLink()) {
+                    const stats = await stat(fullPath).catch(() => null);
+                    if (stats) {
+                        if (stats.isDirectory()) {
+                            await findFilesRecursive(fullPath, depth + 1);
+                        } else if (stats.isFile()) {
+                            files.push(fullPath);
+                        }
+                    }
+                } else if (entry.isDirectory()) {
+                    await findFilesRecursive(fullPath, depth + 1);
+                } else if (entry.isFile()) {
+                    files.push(fullPath);
+                }
+            }
+        };
+
+        await findFilesRecursive(this.uploadsDir);
+        return files;
+    }
+
+    private async readUploadContent(filePath: string, fileExtension: string): Promise<string> {
+        if (fileExtension === '.pdf') {
+            return this.extractTextFromPdf(filePath);
+        }
+        return this.readTextFile(filePath);
+    }
+
     async processUploadsFolder(): Promise<{ processed: number; errors: string[] }> {
-        const supportedExtensions = ['.txt', '.md', '.pdf'];
         const errors: string[] = [];
         let processed = 0;
 
         try {
-            // Custom recursive function to find files following symlinks with cycle detection and depth limit
-            const { readdir, stat, realpath } = await import('fs/promises');
-            const files: string[] = [];
-            const visitedDirs = new Set<string>(); // Track visited directories by real path to prevent cycles
-            const MAX_DEPTH = 10; // Prevent infinite recursion with depth limit
-            
-            async function findFilesRecursive(dir: string, depth: number = 0) {
-                // Check depth limit to prevent infinite recursion
-                if (depth > MAX_DEPTH) {
-                    logger.warn(`Reached maximum depth (${MAX_DEPTH}), skipping: ${dir}`);
-                    return;
-                }
-                
-                // Resolve the real path to detect symlinks and prevent cycles
-                const realPath = await realpath(dir).catch(() => dir);
-                
-                // Check if we've already visited this directory (cycle detection)
-                if (visitedDirs.has(realPath)) {
-                    logger.warn(`Skipping already visited directory (cycle detected): ${realPath}`);
-                    return;
-                }
-                visitedDirs.add(realPath);
-                
-                const entries = await readdir(dir, { withFileTypes: true });
-                for (const entry of entries) {
-                    const fullPath = path.join(dir, entry.name);
-                    if (entry.isSymbolicLink()) {
-                        // Follow symlink and recurse
-                        const stats = await stat(fullPath).catch(() => null);
-                        if (stats) {
-                            if (stats.isDirectory()) {
-                                await findFilesRecursive(fullPath, depth + 1);
-                            } else if (stats.isFile()) {
-                                files.push(fullPath);
-                            }
-                        }
-                    } else if (entry.isDirectory()) {
-                        await findFilesRecursive(fullPath, depth + 1);
-                    } else if (entry.isFile()) {
-                        files.push(fullPath);
-                    }
-                }
-            }
-            
-            await findFilesRecursive(this.uploadsDir);
+            const files = await this.collectUploadFiles();
             for (const filePath of files) {
                 try {
                     const fileName = path.basename(filePath);
                     const fileExtension = path.extname(fileName).toLowerCase();
 
-                    if (!supportedExtensions.includes(fileExtension)) {
+                    if (!SUPPORTED_UPLOAD_EXTENSIONS.includes(fileExtension as typeof SUPPORTED_UPLOAD_EXTENSIONS[number])) {
                         continue;
                     }
 
-                    let content: string;
-
-                    // Extract content based on file type
-                    if (fileExtension === '.pdf') {
-                        content = await this.extractTextFromPdf(filePath);
-                    } else {
-                        // For .txt and .md files, use streaming if enabled
-                        content = await this.readTextFile(filePath);
-                    }
+                    const content = await this.readUploadContent(filePath, fileExtension);
 
                     if (!content.trim()) {
                         errors.push(`File ${fileName} is empty or contains no extractable text`);
@@ -761,7 +759,7 @@ export class DocumentManager {
                     const document = await this.addDocument(title, content, {
                         source: 'upload',
                         originalFilename: fileName,
-                        fileExtension: fileExtension,
+                        fileExtension,
                         processedAt: new Date().toISOString()
                     });
 
@@ -784,7 +782,6 @@ export class DocumentManager {
     }
 
     async processUploadFile(filePath: string, metadata: Record<string, unknown> = {}): Promise<Document | null> {
-        const supportedExtensions = ['.txt', '.md', '.pdf'];
         const uploadsPath = this.getUploadsPath();
         const resolvedPath = path.isAbsolute(filePath)
             ? filePath
@@ -797,16 +794,11 @@ export class DocumentManager {
         const fileName = path.basename(resolvedPath);
         const fileExtension = path.extname(fileName).toLowerCase();
 
-        if (!supportedExtensions.includes(fileExtension)) {
+        if (!SUPPORTED_UPLOAD_EXTENSIONS.includes(fileExtension as typeof SUPPORTED_UPLOAD_EXTENSIONS[number])) {
             throw new Error(`Unsupported upload file type: ${fileExtension}`);
         }
 
-        let content: string;
-        if (fileExtension === '.pdf') {
-            content = await this.extractTextFromPdf(resolvedPath);
-        } else {
-            content = await this.readTextFile(resolvedPath);
-        }
+        const content = await this.readUploadContent(resolvedPath, fileExtension);
 
         if (!content.trim()) {
             throw new Error(`File ${fileName} is empty or contains no extractable text`);
@@ -837,55 +829,11 @@ export class DocumentManager {
     }
 
     async listUploadsFiles(): Promise<{ name: string; size: number; modified: string; supported: boolean }[]> {
-        const supportedExtensions = ['.txt', '.md', '.pdf'];
         const files: { name: string; size: number; modified: string; supported: boolean }[] = [];
 
         try {
-            // Custom recursive function to find files following symlinks with cycle detection and depth limit
-            const { readdir, stat, realpath } = await import('fs/promises');
-            const filePaths: string[] = [];
-            const visitedDirs = new Set<string>(); // Track visited directories by real path to prevent cycles
-            const MAX_DEPTH = 10; // Prevent infinite recursion with depth limit
-            
-            async function findFilesRecursive(dir: string, depth: number = 0) {
-                // Check depth limit to prevent infinite recursion
-                if (depth > MAX_DEPTH) {
-                    logger.warn(`Reached maximum depth (${MAX_DEPTH}), skipping: ${dir}`);
-                    return;
-                }
-                
-                // Resolve the real path to detect symlinks and prevent cycles
-                const realPath = await realpath(dir).catch(() => dir);
-                
-                // Check if we've already visited this directory (cycle detection)
-                if (visitedDirs.has(realPath)) {
-                    logger.warn(`Skipping already visited directory (cycle detected): ${realPath}`);
-                    return;
-                }
-                visitedDirs.add(realPath);
-                
-                const entries = await readdir(dir, { withFileTypes: true });
-                for (const entry of entries) {
-                    const fullPath = path.join(dir, entry.name);
-                    if (entry.isSymbolicLink()) {
-                        // Follow symlink and recurse
-                        const stats = await stat(fullPath).catch(() => null);
-                        if (stats) {
-                            if (stats.isDirectory()) {
-                                await findFilesRecursive(fullPath, depth + 1);
-                            } else if (stats.isFile()) {
-                                filePaths.push(fullPath);
-                            }
-                        }
-                    } else if (entry.isDirectory()) {
-                        await findFilesRecursive(fullPath, depth + 1);
-                    } else if (entry.isFile()) {
-                        filePaths.push(fullPath);
-                    }
-                }
-            }
-            
-            await findFilesRecursive(this.uploadsDir);
+            const { stat } = await import('fs/promises');
+            const filePaths = await this.collectUploadFiles();
 
             for (const filePath of filePaths) {
                 const stats = await stat(filePath);
@@ -897,7 +845,7 @@ export class DocumentManager {
                         name: fileName,
                         size: stats.size,
                         modified: stats.mtime.toISOString(),
-                        supported: supportedExtensions.includes(fileExtension)
+                        supported: SUPPORTED_UPLOAD_EXTENSIONS.includes(fileExtension as typeof SUPPORTED_UPLOAD_EXTENSIONS[number])
                     });
                 }
             }
