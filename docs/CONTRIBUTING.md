@@ -290,14 +290,15 @@ Add any other context or screenshots about the feature request.
 
 ## Release Process
 
-This project uses **semantic-release** for automated releases:
+Saga uses a manual version bump with automated publishing via GitHub Actions
+(npm trusted publishing).
 
 ### Commit Message Format
 
 We follow [Conventional Commits](https://conventionalcommits.org/):
 
 - `feat:` - New features (minor version bump)
-- `fix:` - Bug fixes (patch version bump)  
+- `fix:` - Bug fixes (patch version bump)
 - `docs:` - Documentation changes
 - `style:` - Code formatting changes
 - `refactor:` - Code refactoring
@@ -311,17 +312,16 @@ For breaking changes, add `BREAKING CHANGE:` in the commit body:
 ```bash
 feat: change document storage format
 
-BREAKING CHANGE: Document storage format has changed. 
+BREAKING CHANGE: Document storage format has changed.
 Existing documents need to be re-imported.
 ```
 
 ### Release Flow
 
-1. **Merge to main** triggers semantic-release
-2. **Version bump** based on conventional commits
-3. **CHANGELOG.md** automatically updated
-4. **NPM package** published automatically
-5. **GitHub release** created with notes
+1. Bump `package.json` and update `CHANGELOG.md` on `develop`.
+2. Merge `develop` into `main`.
+3. GitHub Actions publishes to npm on every `main` push **when `package.json` changes**.
+4. Optionally create a GitHub Release with notes.
 
 ## Project Structure
 
