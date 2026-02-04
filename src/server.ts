@@ -155,34 +155,74 @@ async function initializeVllmMetalAutoConfig() {
         const modelPath = process.env.MCP_EMBEDDING_VLLM_MODEL_PATH
             || join(homedir(), '.saga', 'models', modelName);
 
-        if (!existsSync(modelPath)) {
-            logger.warn(`vLLM-metal model path not found: ${modelPath}`);
-            logger.warn('Set MCP_EMBEDDING_VLLM_MODEL_PATH to your HF model directory or download it before starting Saga.');
-            return;
-        }
-
         const port = process.env.MCP_EMBEDDING_VLLM_PORT
             ? Number(process.env.MCP_EMBEDDING_VLLM_PORT)
             : Number(baseUrlParsed.port || '8000');
 
-        const args = [
-            'serve',
-            modelPath,
-            '--trust-remote-code',
-            '--runner', 'pooling',
-            '--model-impl', 'vllm',
-            '--override-pooler-config', '{"pooling_type":"MEAN"}',
-            '--dtype', 'float32',
-            '--port', String(port),
-            '--served-model-name', modelName
-        ];
+        const startServer = (resolvedModelPath: string) => {
+            const args = [
+                'serve',
+                resolvedModelPath,
+                '--trust-remote-code',
+                '--runner', 'pooling',
+                '--model-impl', 'vllm',
+                '--override-pooler-config', '{"pooling_type":"MEAN"}',
+                '--dtype', 'float32',
+                '--port', String(port),
+                '--served-model-name', modelName
+            ];
 
-        logger.info(`Starting vLLM-metal server on ${baseUrlParsed.hostname}:${port} using model ${modelName}`);
-        const child = spawn('vllm', args, {
-            detached: true,
-            stdio: 'ignore',
-        });
-        child.unref();
+            logger.info(`Starting vLLM-metal server on ${baseUrlParsed.hostname}:${port} using model ${modelName}`);
+            const child = spawn('vllm', args, {
+                detached: true,
+                stdio: 'ignore',
+            });
+            child.unref();
+        };
+
+        const autoDownload = process.env.MCP_EMBEDDING_VLLM_AUTO_DOWNLOAD !== 'false';
+        if (!existsSync(modelPath)) {
+            if (!autoDownload) {
+                logger.warn(`vLLM-metal model path not found: ${modelPath}`);
+                logger.warn('Set MCP_EMBEDDING_VLLM_MODEL_PATH to your HF model directory or download it before starting Saga.');
+                return;
+            }
+
+            logger.info(`vLLM-metal model missing; attempting download to ${modelPath}`);
+            const download = spawn(
+                'huggingface-cli',
+                [
+                    'download',
+                    'nvidia/llama-nemotron-embed-1b-v2',
+                    '--local-dir',
+                    modelPath,
+                    '--local-dir-use-symlinks',
+                    'False'
+                ],
+                { detached: true, stdio: 'ignore' }
+            );
+            download.unref();
+
+            const pollIntervalMs = 5000;
+            const maxWaitMs = 10 * 60 * 1000;
+            const startTime = Date.now();
+            const poll = () => {
+                if (existsSync(modelPath)) {
+                    logger.info(`vLLM-metal model downloaded: ${modelPath}`);
+                    startServer(modelPath);
+                    return;
+                }
+                if (Date.now() - startTime > maxWaitMs) {
+                    logger.warn('vLLM-metal model download timed out; start Saga again after download completes.');
+                    return;
+                }
+                setTimeout(poll, pollIntervalMs);
+            };
+            setTimeout(poll, pollIntervalMs);
+            return;
+        }
+
+        startServer(modelPath);
     } catch (error) {
         logger.error('vLLM-metal auto-configuration failed', error);
     }
