@@ -819,53 +819,6 @@ server.addTool({
     },
 });
 
-// Performance and Statistics tool
-// server.addTool({
-//     name: "get_performance_stats",
-//     description: "Get performance statistics for indexing, caching, and scalability features",
-//     parameters: z.object({}),
-//     execute: async () => {
-//         try {
-//             const manager = await initializeDocumentManager();
-//             const stats = manager.getStats();
-            
-//             return JSON.stringify({
-//                 phase_1_scalability: {
-//                     indexing: stats.indexing || { enabled: false },
-//                     embedding_cache: stats.embedding_cache || { enabled: false },
-//                     parallel_processing: { enabled: stats.features.parallelProcessing },
-//                     streaming: { enabled: stats.features.streaming }
-//                 },
-//                 environment_variables: {
-//                     MCP_INDEXING_ENABLED: process.env.MCP_INDEXING_ENABLED || 'true',
-//                     MCP_CACHE_SIZE: process.env.MCP_CACHE_SIZE || '1000',
-//                     MCP_PARALLEL_ENABLED: process.env.MCP_PARALLEL_ENABLED || 'true',
-//                     MCP_MAX_WORKERS: process.env.MCP_MAX_WORKERS || '4',
-//                     MCP_STREAMING_ENABLED: process.env.MCP_STREAMING_ENABLED || 'true',
-//                     MCP_STREAM_CHUNK_SIZE: process.env.MCP_STREAM_CHUNK_SIZE || '65536',
-//                     MCP_STREAM_FILE_SIZE_LIMIT: process.env.MCP_STREAM_FILE_SIZE_LIMIT || '10485760'
-//                 },
-//                 description: 'Phase 1 scalability improvements: O(1) indexing, LRU caching, parallel processing, and streaming'
-//             }, null, 2);
-//         } catch (error) {
-//             throw new Error(`Failed to get performance stats: ${error instanceof Error ? error.message : String(error)}`);
-//         }
-//     },
-// });
-
-// Add resource for document access
-// server.addResource({
-//     name: "Documents Database",
-//     uri: "file://./data",
-//     mimeType: "application/json", async load() {
-//         const manager = await initializeDocumentManager();
-//         const documents = await manager.getAllDocuments();
-//         return {
-//             text: JSON.stringify(documents, null, 2),
-//         };
-//     },
-// });
-
 // Start the server
 console.error(`[SagaServer] ${getTimestamp()} About to start server with stdio transport...`);
 console.error(`[SagaServer] ${getTimestamp()} Memory before server.start(): ${getMemoryUsage()}`);
