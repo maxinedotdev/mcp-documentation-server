@@ -80,13 +80,13 @@ export class DocumentManager {
             logger.info('Keyword indexing disabled by config.');
         }
 
-        // Initialize vector database with error handling
+        // Initialize vector database with error handling and retry logic
         // Note: We initialize asynchronously in the background to avoid blocking the constructor
         if (this.useVectorDb) {
             this.vectorDatabase = vectorDatabase || this.createVectorDatabase();
             // Initialize asynchronously without blocking constructor, but store the promise
-            this.vectorDbInitPromise = this.initializeVectorDatabase().catch(error => {
-                logger.error('Vector database initialization failed:', error);
+            this.vectorDbInitPromise = this.initializeVectorDatabaseWithRetry().catch(error => {
+                logger.error('Vector database initialization failed after all retries:', error);
                 this.useVectorDb = false;
                 this.vectorDatabase = null;
                 this.vectorDbInitPromise = null;
@@ -107,19 +107,47 @@ export class DocumentManager {
     }
 
     /**
-     * Initialize vector database
+     * Initialize vector database with exponential backoff retry
+     * Uses 500ms initial delay, max 5 seconds, max 3 retries
      */
-    private async initializeVectorDatabase(): Promise<void> {
+    private async initializeVectorDatabaseWithRetry(): Promise<void> {
         if (!this.vectorDatabase) {
             return;
         }
 
-        try {
-            await this.vectorDatabase.initialize();
-        } catch (error) {
-            logger.error('Failed to initialize vector database:', error);
-            throw error;
+        const maxRetries = 3;
+        const baseDelayMs = 500; // Start with 500ms
+        const maxDelayMs = 5000; // Max 5 seconds
+
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            try {
+                logger.info(`Vector database initialization attempt ${attempt + 1}/${maxRetries + 1}`);
+                await this.vectorDatabase.initialize();
+                logger.info('Vector database initialized successfully');
+                return;
+            } catch (error) {
+                const isLastAttempt = attempt === maxRetries;
+                const errorMessage = error instanceof Error ? error.message : String(error);
+
+                if (isLastAttempt) {
+                    logger.error(`Vector database initialization failed after ${maxRetries + 1} attempts:`, error);
+                    throw new Error(`Failed to initialize vector database: ${errorMessage}`);
+                }
+
+                // Calculate exponential backoff delay
+                const delayMs = Math.min(maxDelayMs, baseDelayMs * Math.pow(2, attempt));
+                logger.warn(`Vector DB initialization attempt ${attempt + 1} failed: ${errorMessage}. Retrying in ${delayMs}ms...`);
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+            }
         }
+    }
+
+    /**
+     * Initialize vector database (legacy method, delegates to retry version)
+     * @deprecated Use initializeVectorDatabaseWithRetry instead
+     */
+    private async initializeVectorDatabase(): Promise<void> {
+        return this.initializeVectorDatabaseWithRetry();
     }
 
     /**

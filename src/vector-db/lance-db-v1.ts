@@ -9,9 +9,12 @@
  * - LRU cache for hot data
  * - Automated backups
  * - Data integrity validation
+ * - File-based locking for concurrent access prevention
  */
 
 import * as crypto from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
 import * as lancedb from '@lancedb/lancedb';
 import { Index } from '@lancedb/lancedb';
 import { getLogger, getEmbeddingDimension } from '../utils.js';
@@ -193,6 +196,195 @@ async function withRetry<T>(
 }
 
 // ============================================================================
+// File-Based Locking for LanceDB
+// ============================================================================
+
+const LOCK_FILE_NAME = 'lancedb.lock';
+const LOCK_MAX_AGE_MS = 30000; // 30 seconds - consider locks older than this stale
+const LOCK_RETRY_DELAY_MS = 500; // Start with 500ms delay
+const LOCK_MAX_RETRY_DELAY_MS = 5000; // Max 5 seconds
+const LOCK_MAX_RETRIES = 3;
+
+/**
+ * File-based lock manager for LanceDB concurrent access prevention
+ * Uses atomic file operations to acquire/release locks
+ */
+class LanceDBLockManager {
+    private lockPath: string;
+    private lockFilePath: string;
+    private isLocked: boolean = false;
+
+    constructor(dbPath: string) {
+        this.lockPath = dbPath;
+        this.lockFilePath = path.join(dbPath, LOCK_FILE_NAME);
+    }
+
+    /**
+     * Acquire lock with exponential backoff retry
+     * @returns true if lock acquired, false otherwise
+     */
+    async acquireLock(): Promise<boolean> {
+        for (let attempt = 0; attempt <= LOCK_MAX_RETRIES; attempt++) {
+            try {
+                if (await this.tryAcquireLock()) {
+                    this.isLocked = true;
+                    logger.info(`LanceDB lock acquired on attempt ${attempt + 1}`);
+                    return true;
+                }
+
+                if (attempt < LOCK_MAX_RETRIES) {
+                    // Calculate exponential backoff delay
+                    const delay = Math.min(
+                        LOCK_MAX_RETRY_DELAY_MS,
+                        LOCK_RETRY_DELAY_MS * Math.pow(2, attempt)
+                    );
+                    logger.warn(`LanceDB lock acquisition failed on attempt ${attempt + 1}, retrying in ${delay}ms...`);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+            } catch (error) {
+                logger.error(`Error acquiring LanceDB lock on attempt ${attempt + 1}:`, error);
+                if (attempt < LOCK_MAX_RETRIES) {
+                    const delay = Math.min(
+                        LOCK_MAX_RETRY_DELAY_MS,
+                        LOCK_RETRY_DELAY_MS * Math.pow(2, attempt)
+                    );
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+            }
+        }
+
+        logger.error(`Failed to acquire LanceDB lock after ${LOCK_MAX_RETRIES + 1} attempts`);
+        return false;
+    }
+
+    /**
+     * Try to acquire lock atomically
+     */
+    private async tryAcquireLock(): Promise<boolean> {
+        // Ensure the directory exists
+        if (!fs.existsSync(this.lockPath)) {
+            fs.mkdirSync(this.lockPath, { recursive: true });
+        }
+
+        // Check if lock file exists
+        if (fs.existsSync(this.lockFilePath)) {
+            try {
+                const lockContent = fs.readFileSync(this.lockFilePath, 'utf-8');
+                const lockData = JSON.parse(lockContent);
+                const { pid, timestamp } = lockData;
+
+                // Check if the lock is stale
+                const lockAge = Date.now() - (timestamp || 0);
+                if (lockAge < LOCK_MAX_AGE_MS) {
+                    // Check if the process is still running
+                    try {
+                        process.kill(pid, 0); // Signal 0 checks if process exists
+                        // Process is still running, lock is valid
+                        return false;
+                    } catch {
+                        // Process doesn't exist, lock is stale
+                        logger.warn(`Removing stale LanceDB lock from PID ${pid} (age: ${lockAge}ms)`);
+                    }
+                } else {
+                    logger.warn(`Removing stale LanceDB lock (age: ${lockAge}ms exceeds ${LOCK_MAX_AGE_MS}ms)`);
+                }
+
+                // Try to remove stale lock
+                try {
+                    fs.unlinkSync(this.lockFilePath);
+                } catch (unlinkError) {
+                    // Another process might have taken the lock
+                    return false;
+                }
+            } catch (parseError) {
+                // Lock file is corrupt, try to remove it
+                try {
+                    fs.unlinkSync(this.lockFilePath);
+                } catch {
+                    return false;
+                }
+            }
+        }
+
+        // Try to create lock file atomically using exclusive flag
+        try {
+            const lockData = {
+                pid: process.pid,
+                timestamp: Date.now(),
+                version: process.version,
+                platform: process.platform
+            };
+
+            // Write to temp file first, then rename for atomic operation
+            const tempPath = `${this.lockFilePath}.${process.pid}.tmp`;
+            fs.writeFileSync(tempPath, JSON.stringify(lockData), { encoding: 'utf-8', flag: 'wx' });
+            fs.renameSync(tempPath, this.lockFilePath);
+
+            return true;
+        } catch (writeError) {
+            // Failed to create lock file (another process might have created it)
+            return false;
+        }
+    }
+
+    /**
+     * Release the lock
+     */
+    releaseLock(): void {
+        if (!this.isLocked) {
+            return;
+        }
+
+        try {
+            if (fs.existsSync(this.lockFilePath)) {
+                const content = fs.readFileSync(this.lockFilePath, 'utf-8');
+                const lockData = JSON.parse(content);
+
+                // Only remove if we own the lock
+                if (lockData.pid === process.pid) {
+                    fs.unlinkSync(this.lockFilePath);
+                    logger.info('LanceDB lock released');
+                }
+            }
+        } catch (error) {
+            logger.warn('Error releasing LanceDB lock:', error);
+        } finally {
+            this.isLocked = false;
+        }
+    }
+
+    /**
+     * Update lock timestamp to prevent it from becoming stale
+     */
+    updateLockTimestamp(): void {
+        if (!this.isLocked) {
+            return;
+        }
+
+        try {
+            if (fs.existsSync(this.lockFilePath)) {
+                const content = fs.readFileSync(this.lockFilePath, 'utf-8');
+                const lockData = JSON.parse(content);
+
+                if (lockData.pid === process.pid) {
+                    lockData.timestamp = Date.now();
+                    fs.writeFileSync(this.lockFilePath, JSON.stringify(lockData), { encoding: 'utf-8' });
+                }
+            }
+        } catch (error) {
+            logger.warn('Error updating LanceDB lock timestamp:', error);
+        }
+    }
+
+    /**
+     * Check if currently holding the lock
+     */
+    hasLock(): boolean {
+        return this.isLocked;
+    }
+}
+
+// ============================================================================
 // LanceDBV1 Class
 // ============================================================================
 
@@ -210,6 +402,7 @@ async function withRetry<T>(
  * - LRU cache for hot data
  * - Automated backups
  * - Data integrity validation
+ * - File-based locking for concurrent access prevention
  */
 export class LanceDBV1 implements ValidationDatabase {
     private db: LanceDB | null = null;
@@ -234,6 +427,10 @@ export class LanceDBV1 implements ValidationDatabase {
     private queryOptimizer: QueryOptimizer;
     private backupManager: BackupManager | null = null;
     private integrityValidator: IntegrityValidator;
+
+    // File-based locking
+    private lockManager: LanceDBLockManager;
+    private lockUpdateInterval: NodeJS.Timeout | null = null;
 
     // Configuration
     private hnswConfig: HNSWEnvironmentConfig;
@@ -276,6 +473,9 @@ export class LanceDBV1 implements ValidationDatabase {
         // Initialize integrity validator
         this.integrityValidator = new IntegrityValidator();
 
+        // Initialize file-based lock manager
+        this.lockManager = new LanceDBLockManager(dbPath);
+
         logger.info(`LanceDBV1 created: path=${dbPath}, HNSW=${this.hnswConfig.useHNSW}, Pool=${this.useConnectionPool}, Cache=${this.useCaching}`);
     }
     
@@ -289,6 +489,15 @@ export class LanceDBV1 implements ValidationDatabase {
         }
 
         logger.info(`Initializing LanceDB v1.0.0 at: ${this.dbPath}`);
+
+        // Acquire file-based lock before initialization
+        const lockAcquired = await this.lockManager.acquireLock();
+        if (!lockAcquired) {
+            throw new Error(
+                'Failed to acquire LanceDB lock. Another instance may be using this database. ' +
+                'If the other instance crashed, delete the lock file manually.'
+            );
+        }
 
         try {
             // Initialize connection pool if enabled
@@ -317,9 +526,17 @@ export class LanceDBV1 implements ValidationDatabase {
             const { createBackupManager } = await import('./backup-manager.js');
             this.backupManager = await createBackupManager(this.dbPath);
 
+            // Start lock update interval to prevent lock from becoming stale
+            this.lockUpdateInterval = setInterval(() => {
+                this.lockManager.updateLockTimestamp();
+            }, 15000); // Update every 15 seconds
+            this.lockUpdateInterval.unref();
+
             this.initialized = true;
             logger.info('LanceDB v1.0.0 initialized successfully with optimizations');
         } catch (error) {
+            // Release lock on initialization failure
+            this.lockManager.releaseLock();
             logger.error('Failed to initialize LanceDB v1.0.0:', error);
             throw new Error(`LanceDB v1.0.0 initialization failed: ${error}`);
         }
@@ -1406,6 +1623,15 @@ export class LanceDBV1 implements ValidationDatabase {
      * Close the database connection
      */
     async close(): Promise<void> {
+        // Stop lock update interval
+        if (this.lockUpdateInterval) {
+            clearInterval(this.lockUpdateInterval);
+            this.lockUpdateInterval = null;
+        }
+
+        // Release file-based lock
+        this.lockManager.releaseLock();
+
         if (this.db) {
             try {
                 await this.db.close();
