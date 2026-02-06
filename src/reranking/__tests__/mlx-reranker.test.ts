@@ -323,6 +323,20 @@ describe('Configuration with MLX', () => {
             delete process.env.MCP_RERANKING_TIMEOUT;
             delete process.env.MCP_RERANKING_API_KEY;
         });
+
+        it('should not require API key for MLX provider', () => {
+            process.env.MCP_RERANKING_ENABLED = 'true';
+            process.env.MCP_RERANKING_PROVIDER = 'mlx';
+            process.env.MCP_RERANKING_MLX_MODEL_PATH = '/path/to/model';
+            delete process.env.MCP_RERANKING_API_KEY;
+
+            expect(() => getRerankingConfig()).not.toThrow();
+            expect(getRerankingConfig().provider).toBe('mlx');
+
+            delete process.env.MCP_RERANKING_ENABLED;
+            delete process.env.MCP_RERANKING_PROVIDER;
+            delete process.env.MCP_RERANKING_MLX_MODEL_PATH;
+        });
     });
 
     describe('isRerankingEnabled', () => {

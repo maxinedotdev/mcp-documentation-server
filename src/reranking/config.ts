@@ -102,8 +102,13 @@ export function validateRerankingConfig(): void {
         );
     }
 
-    // Validate API key for API-based providers (except custom, lmstudio, and mlx which may not need it)
-    if (config.provider !== 'custom' && config.provider !== 'lmstudio' && !config.apiKey) {
+    // Validate API key for API-based providers only
+    if (
+        config.provider !== 'custom' &&
+        config.provider !== 'lmstudio' &&
+        config.provider !== 'mlx' &&
+        !config.apiKey
+    ) {
         throw new Error(
             `API key is required for ${config.provider} provider. ` +
             `Set MCP_RERANKING_API_KEY environment variable.`
