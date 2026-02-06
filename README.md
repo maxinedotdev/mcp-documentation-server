@@ -301,22 +301,50 @@ MCP_AI_BASE_URL = "http://127.0.0.1:1234/v1"
 MCP_AI_MODEL = "ministral-3-8b-instruct-2512"
 ```
 
-2. Install the user LaunchAgent:
+2. Install a background service (choose your OS):
 
+macOS (launchd):
 ```bash
-npm run service:install
+npm run service:install:mac
 ```
 
-By default this runs `dist/server.js` from the current Saga checkout. Override runtime path when needed:
-
+Linux (systemd user service):
 ```bash
-SAGA_RUNTIME_DIR=~/Documents/git/saga-staging npm run service:install
+npm run service:install:linux
 ```
 
-3. Check status:
+Windows (PowerShell + Windows service):
+```bash
+npm run service:install:windows
+```
+
+By default service scripts run `dist/server.js` from the current Saga checkout. Override runtime path when needed:
 
 ```bash
-npm run service:status
+SAGA_RUNTIME_DIR=~/Documents/git/saga-staging npm run service:install:mac
+SAGA_RUNTIME_DIR=~/Documents/git/saga-staging npm run service:install:linux
+```
+
+Windows override example:
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/install-windows-service.ps1 -RuntimeDir C:\path\to\saga-staging
+```
+
+3. Check service status:
+
+macOS:
+```bash
+npm run service:status:mac
+```
+
+Linux:
+```bash
+npm run service:status:linux
+```
+
+Windows:
+```bash
+npm run service:status:windows
 ```
 
 4. Set MCP clients to URL mode:
@@ -326,6 +354,13 @@ http://127.0.0.1:8080/mcp
 ```
 
 This avoids one-process-per-client stdio spawning and keeps Saga as a single managed process.
+
+Uninstall service helpers:
+```bash
+npm run service:uninstall:mac
+npm run service:uninstall:linux
+npm run service:uninstall:windows
+```
 
 Environment variables:
 
