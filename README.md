@@ -4,6 +4,7 @@
 # Saga MCP Server
 
 [![npm publish](https://github.com/maxinedotdev/saga/actions/workflows/npm-publish.yml/badge.svg)](https://github.com/maxinedotdev/saga/actions/workflows/npm-publish.yml)
+[npm package](https://www.npmjs.com/package/@maxinedotdev/saga)
 
 Saga is a TypeScript-based [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for local-first document management and semantic search using embeddings. It ships with LanceDB vector storage, web crawling, and optional LLM integration.
 

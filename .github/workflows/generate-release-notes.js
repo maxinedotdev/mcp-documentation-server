@@ -14,6 +14,7 @@ ${pkg.description}
 ${pkg.keywords.map(k => "- " + k).join("\n")}
 
 ## Links
+- [npm Package](https://www.npmjs.com/package/${encodeURIComponent(pkg.name)})
 - [Homepage](${pkg.homepage})
 - [Repository](${pkg.repository.url})
 - [Issues](${pkg.bugs.url})

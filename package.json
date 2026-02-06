@@ -10,7 +10,7 @@
   "homepage": "https://github.com/maxinedotdev/saga#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/maxinedotdev/saga.git"
+    "url": "https://github.com/maxinedotdev/saga"
   },
   "bugs": {
     "url": "https://github.com/maxinedotdev/saga/issues"
@@ -98,6 +98,7 @@
     "zod": "^4.3.6"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   }
 }
