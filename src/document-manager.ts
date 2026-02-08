@@ -1197,14 +1197,32 @@ export class DocumentManager {
             }
         }
 
-        // Blend lexical title matching with semantic score to stabilize short-query relevance.
+        // Blend lexical matching with semantic score to stabilize short-query relevance.
+        // For short explicit queries (e.g. "pixi"), filter out zero-lexical-match docs
+        // if at least one lexical match is present.
         const queryKeywords = this.extractKeywords(queryText);
         if (queryKeywords.length > 0) {
+            const lexicalScores = finalResults.map(result => ({
+                result,
+                lexicalRatio: this.getLexicalKeywordMatchRatio(result, queryKeywords),
+            }));
+
+            const hasLexicalMatch = lexicalScores.some(entry => entry.lexicalRatio > 0);
+            if (hasLexicalMatch && queryKeywords.length <= 2) {
+                const filtered = lexicalScores
+                    .filter(entry => entry.lexicalRatio > 0)
+                    .map(entry => entry.result);
+
+                if (filtered.length > 0) {
+                    finalResults.splice(0, finalResults.length, ...filtered);
+                }
+            }
+
             finalResults.sort((a, b) => {
-                const aMatchRatio = this.getTitleKeywordMatchRatio(a.title, queryKeywords);
-                const bMatchRatio = this.getTitleKeywordMatchRatio(b.title, queryKeywords);
-                const aRankScore = a.score + (aMatchRatio * 0.25);
-                const bRankScore = b.score + (bMatchRatio * 0.25);
+                const aMatchRatio = this.getLexicalKeywordMatchRatio(a, queryKeywords);
+                const bMatchRatio = this.getLexicalKeywordMatchRatio(b, queryKeywords);
+                const aRankScore = a.score + (aMatchRatio * 0.4);
+                const bRankScore = b.score + (bMatchRatio * 0.4);
 
                 if (bRankScore !== aRankScore) {
                     return bRankScore - aRankScore;
@@ -1252,20 +1270,61 @@ export class DocumentManager {
         return result;
     }
 
-    private getTitleKeywordMatchRatio(title: string | undefined, keywords: string[]): number {
-        if (!title || keywords.length === 0) {
+    private getLexicalKeywordMatchRatio(result: DocumentDiscoveryResult, keywords: string[]): number {
+        if (keywords.length === 0) {
             return 0;
         }
 
-        const titleLower = title.toLowerCase();
+        const haystack = this.buildLexicalHaystack(result);
+        if (!haystack) {
+            return 0;
+        }
+
         let matches = 0;
         for (const keyword of keywords) {
-            if (titleLower.includes(keyword)) {
+            if (haystack.includes(keyword)) {
                 matches += 1;
             }
         }
 
         return matches / keywords.length;
+    }
+
+    private buildLexicalHaystack(result: DocumentDiscoveryResult): string {
+        const fields: string[] = [];
+
+        if (result.title) {
+            fields.push(result.title);
+        }
+
+        const metadata = result.metadata ?? {};
+        const maybeStrings = [
+            metadata.originalFilename,
+            metadata.original_filename,
+            metadata.crawl_url,
+            metadata.description,
+            metadata.author,
+        ];
+        for (const value of maybeStrings) {
+            if (typeof value === 'string' && value.trim().length > 0) {
+                fields.push(value);
+            }
+        }
+
+        const tagFields = [metadata.tags, metadata.tags_generated];
+        for (const tagField of tagFields) {
+            if (Array.isArray(tagField)) {
+                for (const value of tagField) {
+                    if (typeof value === 'string' && value.trim().length > 0) {
+                        fields.push(value);
+                    }
+                }
+            } else if (typeof tagField === 'string' && tagField.trim().length > 0) {
+                fields.push(tagField);
+            }
+        }
+
+        return fields.join(' ').toLowerCase();
     }
 
     private matchesFilters(metadata: Record<string, any> | undefined, filters: MetadataFilter): boolean {
