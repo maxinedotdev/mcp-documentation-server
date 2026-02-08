@@ -4,6 +4,7 @@
 # Saga MCP Server
 
 [![npm publish](https://github.com/maxinedotdev/saga/actions/workflows/npm-publish.yml/badge.svg)](https://github.com/maxinedotdev/saga/actions/workflows/npm-publish.yml)
+[npm package](https://www.npmjs.com/package/@maxinedotdev/saga)
 
 Saga is a TypeScript-based [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for local-first document management and semantic search using embeddings. It ships with LanceDB vector storage, web crawling, and optional LLM integration.
 
@@ -65,7 +66,7 @@ Add to your MCP client configuration (e.g., Claude Desktop):
 ```json
 {
   "mcpServers": {
-    "documentation": {
+    "saga": {
       "command": "saga",
       "env": {
         "MCP_BASE_DIR": "~/.saga",
@@ -182,21 +183,21 @@ rm -rf ~/.saga/lancedb
 
 ```bash
 # View database statistics
-node dist/scripts/db-status.ts
+tsx scripts/benchmark-db.ts
 ```
 
 #### Initialize Fresh Database
 
 ```bash
 # Initialize a new v1.0.0 database
-node dist/scripts/init-db-v1.ts --verbose
+npm run db:init
 ```
 
 #### Drop Database
 
 ```bash
 # Remove all database data
-node dist/scripts/drop-db.ts
+npm run db:drop
 ```
 
 ### Troubleshooting
@@ -218,9 +219,9 @@ node dist/scripts/drop-db.ts
 **Symptom**: Slow queries
 
 **Solutions**:
-1. Check database stats: `node dist/scripts/db-status.ts`
+1. Check database metrics: `tsx scripts/benchmark-db.ts`
 2. Reduce result limit for faster queries
-3. Monitor with `node dist/scripts/benchmark-db.ts`
+3. Monitor with `npm run db:benchmark`
 
 **Symptom**: High memory usage
 
@@ -244,7 +245,10 @@ node dist/scripts/drop-db.ts
 - `list_uploads_files` - List files in uploads folder
 
 ### Search & Analysis
+- `search_documents` - Search chunks within a specific document
 - `search_documents_with_ai` - LLM-powered analysis (requires provider config)
+- `search_code_blocks` - Semantic code block search across documents
+- `get_code_blocks` - Return grouped code block variants for a document
 - `get_context_window` - Get neighboring chunks for context
 - `crawl_documentation` - Crawl public docs from a seed URL
 - `delete_crawl_session` - Remove all documents from a crawl session
@@ -277,6 +281,7 @@ MCP_EMBEDDING_MODEL = "llama-nemotron-embed-1b-v2"
 ### Single-instance mode (recommended for multiple MCP clients)
 
 Run one Saga process as a background service and point MCP clients at the same HTTP endpoint.
+This is supported across all three platforms: macOS (launchd), Linux (systemd user service), and Windows (Windows service).
 
 1. Create `~/.saga/saga.toml`:
 
@@ -295,7 +300,7 @@ stateless = false
 [env]
 MCP_EMBEDDING_PROVIDER = "openai"
 MCP_EMBEDDING_BASE_URL = "http://127.0.0.1:1234/v1"
-MCP_EMBEDDING_MODEL = "text-embedding-multilingual-e5-large-instruct"
+MCP_EMBEDDING_MODEL = "llama-nemotron-embed-1b-v2"
 MCP_AI_PROVIDER = "openai"
 MCP_AI_BASE_URL = "http://127.0.0.1:1234/v1"
 MCP_AI_MODEL = "ministral-3-8b-instruct-2512"
@@ -313,7 +318,7 @@ Linux (systemd user service):
 npm run service:install:linux
 ```
 
-Windows (PowerShell + Windows service):
+Windows (PowerShell + Windows service, run terminal as Administrator):
 ```bash
 npm run service:install:windows
 ```
@@ -355,6 +360,37 @@ http://127.0.0.1:8080/mcp
 
 This avoids one-process-per-client stdio spawning and keeps Saga as a single managed process.
 
+Example MCP client configs:
+
+Kilo (`mcp_settings.json`) Saga entry:
+```json
+{
+  "saga": {
+    "type": "streamable-http",
+    "url": "http://127.0.0.1:8080/mcp",
+    "timeout": 600,
+    "disabled": false
+  }
+}
+```
+
+Codex (`~/.codex/config.toml`) Saga entry:
+```toml
+[mcp_servers.saga]
+enabled = true
+url = "http://127.0.0.1:8080/mcp"
+```
+
+Single-instance diagnostics:
+
+- If you see high CPU from many `Code Helper (Plugin)` processes, check parent commands. Non-Saga MCP servers (for example `synthetic-search`) can still spawn per client/session.
+- Confirm Saga is single-instance:
+  - macOS: `launchctl list | rg saga-mcp`
+  - Linux: `systemctl --user status dev.maxinedot.saga-mcp.service`
+  - Windows: `Get-Service SagaMcpService`
+- Trace process parents:
+  - `ps -axo pid,ppid,pcpu,command | rg -i "dist/server.js|synthetic-search|Code Helper"`
+
 Uninstall service helpers:
 ```bash
 npm run service:uninstall:mac
@@ -381,7 +417,7 @@ Environment variables:
 | `MCP_AI_MODEL` | LLM model name | Provider default |
 | `MCP_AI_API_KEY` | API key for remote providers | - |
 | `MCP_TAG_GENERATION_ENABLED` | Auto-generate tags with AI | `false` |
-| `MCP_SIMILARITY_THRESHOLD` | Min similarity score (0.0-1.0) | `0.0` |
+| `MCP_SIMILARITY_THRESHOLD` | Min similarity score (0.0-1.0) | `0.5` |
 
 ### Reranking Configuration
 
@@ -500,7 +536,7 @@ MCP_AI_API_KEY=your-api-key
      -H "Content-Type: application/json" \
      -d '{"input": ["test"], "model": "llama-nemotron-embed-1b-v2"}'
    ```
-3. **Check VS Code MCP logs**: Open Output panel → Select "MCP Documentation Server"
+3. **Check VS Code MCP logs**: Open Output panel and inspect the `saga` MCP server log
 4. **Restart VS Code** after applying fixes
 
 ### LM Studio "Unexpected endpoint or method" Errors

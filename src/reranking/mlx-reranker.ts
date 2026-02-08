@@ -16,9 +16,11 @@ import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import type { Reranker, RerankerConfig, RerankOptions, RerankResult } from '../types.js';
+import { getLogger } from '../utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+const logger = getLogger('MlxReranker');
 
 /**
  * Configuration for MLX reranker
@@ -53,6 +55,7 @@ export class MlxReranker implements Reranker {
     private config: MlxRerankerConfig;
     private ready: boolean = false;
     private pythonScriptPath: string;
+    private errorLogState = new Map<string, { lastLoggedAt: number; suppressed: number }>();
 
     constructor(config: Partial<MlxRerankerConfig>) {
         // Apply defaults
@@ -71,6 +74,24 @@ export class MlxReranker implements Reranker {
         this.pythonScriptPath = join(__dirname, 'mlx_reranker.py');
     }
 
+    private logErrorThrottled(key: string, message: string, intervalMs: number = 60000): void {
+        const now = Date.now();
+        const state = this.errorLogState.get(key);
+
+        if (!state || now - state.lastLoggedAt >= intervalMs) {
+            if (state && state.suppressed > 0) {
+                logger.error(`${message} (suppressed ${state.suppressed} similar errors in last ${Math.round(intervalMs / 1000)}s)`);
+            } else {
+                logger.error(message);
+            }
+            this.errorLogState.set(key, { lastLoggedAt: now, suppressed: 0 });
+            return;
+        }
+
+        state.suppressed += 1;
+        this.errorLogState.set(key, state);
+    }
+
     /**
      * Initialize the MLX reranker
      * Checks if UV and MLX are available
@@ -80,8 +101,8 @@ export class MlxReranker implements Reranker {
             // Check if UV is available
             await this.runUvCommand(['--version']);
             
-            // Check if MLX is installed via UV
-            await this.runUvCommand(['run', 'python', '-c', 'import mlx; print(mlx.__version__)']);
+            // Check if MLX is installed via UV (avoid relying on __version__ availability)
+            await this.runUvCommand(['run', 'python', '-c', 'import mlx.core as mx; print("mlx-ok")']);
             
             // Check if model path exists
             if (!this.config.modelPath) {
@@ -90,7 +111,8 @@ export class MlxReranker implements Reranker {
 
             this.ready = true;
         } catch (error) {
-            console.error('Failed to initialize MLX reranker:', error);
+            const message = error instanceof Error ? error.message : String(error);
+            this.logErrorThrottled('initialize-failed', `Failed to initialize MLX reranker: ${message}`);
             this.ready = false;
             throw error;
         }
@@ -134,7 +156,8 @@ export class MlxReranker implements Reranker {
 
             return response.results || [];
         } catch (error) {
-            console.error('MLX reranking failed:', error);
+            const message = error instanceof Error ? error.message : String(error);
+            this.logErrorThrottled('rerank-failed', `MLX reranking failed: ${message}`);
             throw error;
         }
     }

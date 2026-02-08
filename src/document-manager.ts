@@ -11,7 +11,8 @@ import { normalizeLanguageTag } from './code-block-utils.js';
 import { LanceDBV1 } from './vector-db/lance-db-v1.js';
 import { detectLanguages, getAcceptedLanguages, getLanguageConfidenceThreshold, isLanguageAllowed, getDefaultQueryLanguages } from './language-detection.js';
 import { ApiReranker } from './reranking/api-reranker.js';
-import { getRerankingConfig, isRerankingEnabled } from './reranking/config.js';
+import { MlxReranker } from './reranking/mlx-reranker.js';
+import { getRerankingRuntimeConfig, isRerankingEnabled } from './reranking/config.js';
 import type { ChunkV1, CodeBlockV1, DocumentTagV1, DocumentV1 } from './types/database-v1.js';
 
 const logger = getLogger('DocumentManager');
@@ -35,6 +36,8 @@ export class DocumentManager {
     private useGeneratedTagsInQuery: boolean;
     private reranker: Reranker | null = null;
     private rerankingEnabled: boolean = false;
+    private rerankerInitPromise: Promise<void> | null = null;
+    private throttledWarnState = new Map<string, { lastLoggedAt: number; suppressed: number }>();
 
     constructor(embeddingProvider: EmbeddingProvider, vectorDatabase?: LanceDBV1) {
         // Always use default paths
@@ -57,9 +60,40 @@ export class DocumentManager {
         this.rerankingEnabled = isRerankingEnabled();
         if (this.rerankingEnabled) {
             try {
-                const config = getRerankingConfig();
-                this.reranker = new ApiReranker(config);
-                logger.info(`Reranker initialized (${config.provider}, ${config.model})`);
+                const config = getRerankingRuntimeConfig();
+
+                if (config.provider === 'mlx') {
+                    const mlxReranker = new MlxReranker({
+                        model: config.model,
+                        modelPath: config.mlxModelPath,
+                        uvPath: config.mlxUvPath,
+                        pythonPath: config.mlxPythonPath,
+                        maxCandidates: config.maxCandidates,
+                        topK: config.topK,
+                        timeout: config.timeout,
+                    });
+                    this.reranker = mlxReranker;
+                    this.rerankerInitPromise = mlxReranker.initialize()
+                        .then(() => {
+                            logger.info(`Reranker initialized (${config.provider}, ${config.model})`);
+                            this.rerankerInitPromise = null;
+                        })
+                        .catch((error) => {
+                            const initErrorMessage = error instanceof Error ? error.message : String(error);
+                            const initErrorStack = error instanceof Error ? error.stack : undefined;
+                            logger.error(`Reranker initialization failed: ${initErrorMessage}`);
+                            if (initErrorStack) {
+                                logger.error(initErrorStack);
+                            }
+                            this.rerankingEnabled = false;
+                            this.reranker = null;
+                            this.rerankerInitPromise = null;
+                        });
+                    logger.info(`Reranker initialization started (${config.provider}, ${config.model})`);
+                } else {
+                    this.reranker = new ApiReranker(config);
+                    logger.info(`Reranker initialized (${config.provider}, ${config.model})`);
+                }
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
                 const errorStack = error instanceof Error ? error.stack : undefined;
@@ -80,13 +114,13 @@ export class DocumentManager {
             logger.info('Keyword indexing disabled by config.');
         }
 
-        // Initialize vector database with error handling
+        // Initialize vector database with error handling and retry logic
         // Note: We initialize asynchronously in the background to avoid blocking the constructor
         if (this.useVectorDb) {
             this.vectorDatabase = vectorDatabase || this.createVectorDatabase();
             // Initialize asynchronously without blocking constructor, but store the promise
-            this.vectorDbInitPromise = this.initializeVectorDatabase().catch(error => {
-                logger.error('Vector database initialization failed:', error);
+            this.vectorDbInitPromise = this.initializeVectorDatabaseWithRetry().catch(error => {
+                logger.error('Vector database initialization failed after all retries:', error);
                 this.useVectorDb = false;
                 this.vectorDatabase = null;
                 this.vectorDbInitPromise = null;
@@ -94,6 +128,24 @@ export class DocumentManager {
         } else {
             logger.warn('Vector DB disabled; vector features are unavailable.');
         }
+    }
+
+    private logWarnThrottled(key: string, message: string, intervalMs: number = 60000): void {
+        const now = Date.now();
+        const state = this.throttledWarnState.get(key);
+
+        if (!state || now - state.lastLoggedAt >= intervalMs) {
+            if (state && state.suppressed > 0) {
+                logger.warn(`${message} (suppressed ${state.suppressed} similar warnings in last ${Math.round(intervalMs / 1000)}s)`);
+            } else {
+                logger.warn(message);
+            }
+            this.throttledWarnState.set(key, { lastLoggedAt: now, suppressed: 0 });
+            return;
+        }
+
+        state.suppressed += 1;
+        this.throttledWarnState.set(key, state);
     }
 
     /**
@@ -107,19 +159,47 @@ export class DocumentManager {
     }
 
     /**
-     * Initialize vector database
+     * Initialize vector database with exponential backoff retry
+     * Uses 500ms initial delay, max 5 seconds, max 3 retries
      */
-    private async initializeVectorDatabase(): Promise<void> {
+    private async initializeVectorDatabaseWithRetry(): Promise<void> {
         if (!this.vectorDatabase) {
             return;
         }
 
-        try {
-            await this.vectorDatabase.initialize();
-        } catch (error) {
-            logger.error('Failed to initialize vector database:', error);
-            throw error;
+        const maxRetries = 3;
+        const baseDelayMs = 500; // Start with 500ms
+        const maxDelayMs = 5000; // Max 5 seconds
+
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            try {
+                logger.info(`Vector database initialization attempt ${attempt + 1}/${maxRetries + 1}`);
+                await this.vectorDatabase.initialize();
+                logger.info('Vector database initialized successfully');
+                return;
+            } catch (error) {
+                const isLastAttempt = attempt === maxRetries;
+                const errorMessage = error instanceof Error ? error.message : String(error);
+
+                if (isLastAttempt) {
+                    logger.error(`Vector database initialization failed after ${maxRetries + 1} attempts:`, error);
+                    throw new Error(`Failed to initialize vector database: ${errorMessage}`);
+                }
+
+                // Calculate exponential backoff delay
+                const delayMs = Math.min(maxDelayMs, baseDelayMs * Math.pow(2, attempt));
+                logger.warn(`Vector DB initialization attempt ${attempt + 1} failed: ${errorMessage}. Retrying in ${delayMs}ms...`);
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+            }
         }
+    }
+
+    /**
+     * Initialize vector database (legacy method, delegates to retry version)
+     * @deprecated Use initializeVectorDatabaseWithRetry instead
+     */
+    private async initializeVectorDatabase(): Promise<void> {
+        return this.initializeVectorDatabaseWithRetry();
     }
 
     /**
@@ -171,7 +251,10 @@ export class DocumentManager {
         }
 
         // Check if vector DB is actually initialized
-        const isInitialized = (this.vectorDatabase as any).isInitialized?.() ?? true;
+        // Note: this.vectorDatabase could be null if initialization failed during retry loop
+        const isInitialized = this.vectorDatabase
+            ? (this.vectorDatabase as any).isInitialized?.() ?? true
+            : false;
         
         if (!isInitialized) {
             return false;
@@ -433,8 +516,29 @@ export class DocumentManager {
 
     private getSimilarityThreshold(): number {
         const raw = process.env.MCP_SIMILARITY_THRESHOLD;
-        const parsed = raw ? Number.parseFloat(raw) : Number.NaN;
-        return Number.isFinite(parsed) ? parsed : 0.0;
+        const defaultThreshold = 0.5;
+
+        if (!raw || raw.trim().length === 0) {
+            return defaultThreshold;
+        }
+
+        const parsed = Number.parseFloat(raw);
+        if (!Number.isFinite(parsed)) {
+            this.logWarnThrottled(
+                'invalid-similarity-threshold',
+                `Invalid MCP_SIMILARITY_THRESHOLD "${raw}", using default ${defaultThreshold}`
+            );
+            return defaultThreshold;
+        }
+
+        if (parsed < 0 || parsed > 1) {
+            this.logWarnThrottled(
+                'out-of-range-similarity-threshold',
+                `MCP_SIMILARITY_THRESHOLD should be between 0.0 and 1.0, clamping value ${parsed}`
+            );
+        }
+
+        return Math.max(0, Math.min(1, parsed));
     }
 
     private calculateContentHash(content: string): string {
@@ -939,30 +1043,40 @@ export class DocumentManager {
                         candidateLimit
                     );
                     
-                    // Group by document ID and aggregate scores
-                    const docScoreMap = new Map<string, { score: number; chunks: number }>();
+                    // Group by document ID and aggregate using top chunk scores.
+                    // Averaging across all retrieved chunks can over-reward broad docs.
+                    const docScoreMap = new Map<string, { topScores: number[]; maxScore: number; chunks: number }>();
                     
                     for (const result of vectorResults) {
                         const docId = result.chunk.document_id;
-                        const existing = docScoreMap.get(docId) || { score: 0, chunks: 0 };
+                        const existing = docScoreMap.get(docId) || { topScores: [], maxScore: 0, chunks: 0 };
+                        const score = result.score;
+                        const topScores = [...existing.topScores, score]
+                            .sort((a, b) => b - a)
+                            .slice(0, 3);
                         docScoreMap.set(docId, {
-                            score: existing.score + result.score,
+                            topScores,
+                            maxScore: Math.max(existing.maxScore, score),
                             chunks: existing.chunks + 1
                         });
                     }
                     
-                    // Convert to results with average scores
+                    // Convert to results with blended top-score ranking
                     const similarityThreshold = this.getSimilarityThreshold();
                     
                     candidates = Array.from(docScoreMap.entries())
-                        .filter(([_, data]) => (data.score / data.chunks) >= similarityThreshold)
-                        .map(([docId, data]) => ({
-                            id: docId,
-                            title: '',
-                            score: data.score / data.chunks,
-                            updated_at: '',
-                            chunks_count: data.chunks
-                        }))
+                        .map(([docId, data]) => {
+                            const topAverage = data.topScores.reduce((sum, score) => sum + score, 0) / Math.max(data.topScores.length, 1);
+                            const blendedScore = (topAverage * 0.8) + (data.maxScore * 0.2);
+                            return {
+                                id: docId,
+                                title: '',
+                                score: blendedScore,
+                                updated_at: '',
+                                chunks_count: data.chunks
+                            };
+                        })
+                        .filter((candidate) => candidate.score >= similarityThreshold)
                         .sort((a, b) => b.score - a.score);
                 } catch (error) {
                     logger.warn('Vector search failed, falling back to keyword search:', error);
@@ -974,37 +1088,63 @@ export class DocumentManager {
             logger.warn('Vector DB not enabled, skipping vector search');
         }
         
-        // Fall back to keyword search if vector search returned insufficient results
-        const minVectorResults = Math.max(1, Math.floor(limit / 2));
-        if (candidates.length < minVectorResults && this.useIndexing && this.vectorDatabase) {
+        // Always merge keyword results when indexing is enabled so exact token matches
+        // can recover from broad semantic matches on short queries.
+        if (this.useIndexing && this.vectorDatabase) {
             const keywordResults = await this.keywordSearchFallback(queryText, candidates);
-            candidates = [...candidates, ...keywordResults];
+
+            if (keywordResults.length > 0) {
+                const merged = new Map<string, DocumentDiscoveryResult>();
+
+                for (const candidate of candidates) {
+                    merged.set(candidate.id, candidate);
+                }
+
+                for (const keywordResult of keywordResults) {
+                    const existing = merged.get(keywordResult.id);
+                    if (!existing || keywordResult.score > existing.score) {
+                        merged.set(keywordResult.id, keywordResult);
+                    }
+                }
+
+                candidates = Array.from(merged.values()).sort((a, b) => b.score - a.score);
+            }
         }
         
         // Stage 2: Rerank if enabled
         let results: DocumentDiscoveryResult[] = candidates;
         if (useReranking && this.reranker && candidates.length > 0) {
-            try {
-                // Fetch document contents for reranking
-                const documentContents: string[] = [];
-                for (const candidate of candidates) {
-                    const document = await this.getDocument(candidate.id);
-                    if (document) {
-                        documentContents.push(document.content);
-                    }
-                }
-                
-                // Perform reranking
-                const reranked = await this.reranker.rerank(queryText, documentContents, {
-                    topK: limit + offset
-                });
+            if (this.rerankerInitPromise) {
+                await this.rerankerInitPromise;
+            }
 
-                // Map reranked indices to results
-                results = this.mapRerankedResults(reranked, candidates);
-            } catch (error) {
-                logger.warn('Reranking failed, using vector-only results:', error);
-                // Fallback to vector-only results if reranking fails
+            if (!this.reranker || !this.reranker.isReady()) {
+                this.logWarnThrottled('reranker-not-ready', 'Reranker is not ready, using vector-only results');
                 results = candidates;
+            } else {
+                try {
+                    // Fetch document contents for reranking
+                    const documentContents: string[] = [];
+                    for (const candidate of candidates) {
+                        const document = await this.getDocument(candidate.id);
+                        if (document) {
+                            documentContents.push(document.content);
+                        }
+                    }
+                    
+                    // Perform reranking
+                    const reranked = await this.reranker.rerank(queryText, documentContents, {
+                        topK: limit + offset
+                    });
+
+                    // Map reranked indices to results
+                    results = this.mapRerankedResults(reranked, candidates);
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    this.logWarnThrottled('reranker-failed', `Reranking failed, using vector-only results: ${message}`);
+                    // Fallback to vector-only results if reranking fails
+                    results = candidates;
+                }
             }
         }
         
@@ -1056,6 +1196,50 @@ export class DocumentManager {
                 });
             }
         }
+
+        // Blend lexical matching with semantic score to stabilize short-query relevance.
+        // For short explicit queries (e.g. "pixi"), filter out zero-lexical-match docs
+        // if at least one lexical match is present.
+        const queryKeywords = this.extractKeywords(queryText);
+        if (queryKeywords.length > 0) {
+            const fullQueryMatches = finalResults.filter(result =>
+                this.hasFullQueryPhraseMatch(result, queryText)
+            );
+            if (fullQueryMatches.length > 0 && queryKeywords.length <= 3) {
+                finalResults.splice(0, finalResults.length, ...fullQueryMatches);
+            }
+
+            const lexicalScores = finalResults.map(result => ({
+                result,
+                lexicalRatio: this.getLexicalKeywordMatchRatio(result, queryKeywords),
+            }));
+
+            const hasLexicalMatch = lexicalScores.some(entry => entry.lexicalRatio > 0);
+            if (hasLexicalMatch && queryKeywords.length <= 2) {
+                const filtered = lexicalScores
+                    .filter(entry => entry.lexicalRatio > 0)
+                    .map(entry => entry.result);
+
+                if (filtered.length > 0) {
+                    finalResults.splice(0, finalResults.length, ...filtered);
+                }
+            }
+
+            finalResults.sort((a, b) => {
+                const aMatchRatio = this.getLexicalKeywordMatchRatio(a, queryKeywords);
+                const bMatchRatio = this.getLexicalKeywordMatchRatio(b, queryKeywords);
+                const aRankScore = a.score + (aMatchRatio * 0.4);
+                const bRankScore = b.score + (bMatchRatio * 0.4);
+
+                if (bRankScore !== aRankScore) {
+                    return bRankScore - aRankScore;
+                }
+                if (bMatchRatio !== aMatchRatio) {
+                    return bMatchRatio - aMatchRatio;
+                }
+                return b.score - a.score;
+            });
+        }
         
         // Apply pagination
         const paginatedResults = finalResults.slice(offset, offset + limit);
@@ -1091,6 +1275,92 @@ export class DocumentManager {
         }
         
         return result;
+    }
+
+    private getLexicalKeywordMatchRatio(result: DocumentDiscoveryResult, keywords: string[]): number {
+        if (keywords.length === 0) {
+            return 0;
+        }
+
+        const haystack = this.buildLexicalHaystack(result);
+        if (!haystack) {
+            return 0;
+        }
+
+        let matches = 0;
+        for (const keyword of keywords) {
+            if (haystack.includes(keyword)) {
+                matches += 1;
+            }
+        }
+
+        return matches / keywords.length;
+    }
+
+    private buildLexicalHaystack(result: DocumentDiscoveryResult): string {
+        const fields: string[] = [];
+
+        if (result.title) {
+            fields.push(result.title);
+        }
+
+        const metadata = result.metadata ?? {};
+        const maybeStrings = [
+            metadata.originalFilename,
+            metadata.original_filename,
+            metadata.crawl_url,
+            metadata.description,
+            metadata.author,
+        ];
+        for (const value of maybeStrings) {
+            if (typeof value === 'string' && value.trim().length > 0) {
+                fields.push(value);
+            }
+        }
+
+        const tagFields = [metadata.tags, metadata.tags_generated];
+        for (const tagField of tagFields) {
+            if (Array.isArray(tagField)) {
+                for (const value of tagField) {
+                    if (typeof value === 'string' && value.trim().length > 0) {
+                        fields.push(value);
+                    }
+                }
+            } else if (typeof tagField === 'string' && tagField.trim().length > 0) {
+                fields.push(tagField);
+            }
+        }
+
+        return fields.join(' ').toLowerCase();
+    }
+
+    private hasFullQueryPhraseMatch(result: DocumentDiscoveryResult, queryText: string): boolean {
+        const normalizedQuery = this.normalizeLexicalText(queryText);
+        if (normalizedQuery.length < 3) {
+            return false;
+        }
+
+        const normalizedHaystack = this.normalizeLexicalText(this.buildLexicalHaystack(result));
+        if (!normalizedHaystack) {
+            return false;
+        }
+
+        if (normalizedHaystack.includes(normalizedQuery)) {
+            return true;
+        }
+
+        // Also compare compact forms to catch punctuation/spacing variants
+        const compactQuery = normalizedQuery.replace(/\s+/g, '');
+        const compactHaystack = normalizedHaystack.replace(/\s+/g, '');
+        return compactQuery.length >= 3 && compactHaystack.includes(compactQuery);
+    }
+
+    private normalizeLexicalText(text: string): string {
+        return text
+            .toLowerCase()
+            .replace(/[^\p{L}\p{N}]+/gu, ' ')
+            .trim()
+            .replace(/\s+/g, ' ');
     }
 
     private matchesFilters(metadata: Record<string, any> | undefined, filters: MetadataFilter): boolean {
@@ -1462,11 +1732,20 @@ export class DocumentManager {
         }
 
         const existingIds = new Set(existing.map(result => result.id));
-        const maxScore = Math.max(...results.map(result => result.score), 1);
+        const similarityThreshold = this.getSimilarityThreshold();
+        const requiredKeywordMatches = keywords.length <= 2 ? keywords.length : Math.ceil(keywords.length / 2);
+        const eligibleResults = results.filter(result => {
+            if (existingIds.has(result.document_id)) {
+                return false;
+            }
+            return result.matched_keywords >= requiredKeywordMatches;
+        });
+        const maxScore = Math.max(...eligibleResults.map(result => result.score), 1);
         const keywordResults: DocumentDiscoveryResult[] = [];
 
-        for (const result of results) {
-            if (existingIds.has(result.document_id)) {
+        for (const result of eligibleResults) {
+            const normalizedScore = result.score / maxScore;
+            if (normalizedScore < similarityThreshold) {
                 continue;
             }
 
@@ -1478,7 +1757,7 @@ export class DocumentManager {
             keywordResults.push({
                 id: document.id,
                 title: document.title,
-                score: result.score / maxScore,
+                score: normalizedScore,
                 updated_at: document.updated_at,
                 chunks_count: document.chunks_count,
             });

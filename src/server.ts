@@ -3,28 +3,161 @@
 import 'dotenv/config';
 import { FastMCP } from "fastmcp";
 import { z } from "zod";
+import * as fs from 'fs';
+import * as path from 'path';
 import { applyTomlConfig } from './config.js';
 import { createLazyEmbeddingProvider } from './embedding-provider.js';
 import { DocumentManager } from './document-manager.js';
 import { resolveAiProviderSelection, searchDocumentWithAi } from './ai-search-provider.js';
 import { crawlDocumentation } from './documentation-crawler.js';
 import { extractHtmlContent, looksLikeHtml } from './html-extraction.js';
-import { getLogger } from './utils.js';
+import { getLogger, getDefaultDataDir } from './utils.js';
 import type { Document } from './types.js';
 
 applyTomlConfig();
 
 const logger = getLogger('SagaServer');
-const getTimestamp = () => new Date().toISOString();
 
-logger.info(`${getTimestamp()} Server startup initiated`);
+logger.info('Server startup initiated');
 logger.info(`Process ID: ${process.pid}`);
 logger.info(`Node version: ${process.version}`);
 logger.info(`Platform: ${process.platform}`);
 
+// ============================================
+// SINGLETON INSTANCE CHECK
+// ============================================
+const SINGLETON_LOCK_FILE = 'saga-mcp.lock';
+const SINGLETON_MAX_LOCK_AGE_MS = 60000; // 60 seconds - consider locks older than this stale
+
+function getSingletonLockPath(): string {
+    const baseDir = getDefaultDataDir();
+    return path.join(baseDir, SINGLETON_LOCK_FILE);
+}
+
+function checkSingletonInstance(): { isSingleton: boolean; error?: string } {
+    const lockPath = getSingletonLockPath();
+    
+    try {
+        // Check if lock file exists
+        if (fs.existsSync(lockPath)) {
+            const lockContent = fs.readFileSync(lockPath, 'utf-8');
+            const lockData = JSON.parse(lockContent);
+            const { pid, timestamp } = lockData;
+            
+            // Check if the process is still running
+            const isRunning = isProcessRunning(pid);
+            const lockAge = Date.now() - (timestamp || 0);
+            
+            if (isRunning && lockAge < SINGLETON_MAX_LOCK_AGE_MS) {
+                return {
+                    isSingleton: false,
+                    error: `Another Saga MCP instance is already running (PID: ${pid}). ` +
+                           `Only one instance can run per data directory. ` +
+                           `If the other instance crashed, delete the lock file: ${lockPath}`
+                };
+            }
+            
+            // Lock is stale (old process), remove it
+            logger.warn(`Removing stale lock file from PID ${pid} (age: ${lockAge}ms)`);
+            try {
+                fs.unlinkSync(lockPath);
+            } catch (unlinkError) {
+                // Another process might have taken the lock
+                return {
+                    isSingleton: false,
+                    error: `Failed to remove stale lock file: ${unlinkError}`
+                };
+            }
+        }
+        
+        // Create lock file with our PID
+        const lockData = {
+            pid: process.pid,
+            timestamp: Date.now(),
+            version: process.version,
+            platform: process.platform
+        };
+        
+        // Use atomic write with exclusive flag to prevent race conditions
+        const tempPath = `${lockPath}.${process.pid}.tmp`;
+        fs.writeFileSync(tempPath, JSON.stringify(lockData), { encoding: 'utf-8' });
+        fs.renameSync(tempPath, lockPath);
+        
+        // Set up lock file cleanup on exit
+        const cleanupLock = () => {
+            try {
+                if (fs.existsSync(lockPath)) {
+                    const currentContent = fs.readFileSync(lockPath, 'utf-8');
+                    const currentData = JSON.parse(currentContent);
+                    if (currentData.pid === process.pid) {
+                        fs.unlinkSync(lockPath);
+                        logger.info('Lock file cleaned up on exit');
+                    }
+                }
+            } catch (error) {
+                // Ignore cleanup errors
+            }
+        };
+        
+        process.on('exit', cleanupLock);
+        process.on('SIGTERM', cleanupLock);
+        process.on('SIGINT', cleanupLock);
+        
+        // Update lock file periodically to prevent it from becoming stale
+        const lockUpdateInterval = setInterval(() => {
+            try {
+                if (fs.existsSync(lockPath)) {
+                    const lockData = {
+                        pid: process.pid,
+                        timestamp: Date.now(),
+                        version: process.version,
+                        platform: process.platform
+                    };
+                    fs.writeFileSync(lockPath, JSON.stringify(lockData), { encoding: 'utf-8' });
+                }
+            } catch (error) {
+                logger.warn('Failed to update lock file:', error);
+            }
+        }, 30000); // Update every 30 seconds
+        
+        lockUpdateInterval.unref();
+        
+        return { isSingleton: true };
+    } catch (error) {
+        return {
+            isSingleton: false,
+            error: `Failed to check singleton instance: ${error instanceof Error ? error.message : String(error)}`
+        };
+    }
+}
+
+function isProcessRunning(pid: number): boolean {
+    try {
+        // Send signal 0 to check if process exists (doesn't actually send a signal)
+        process.kill(pid, 0);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+// Perform singleton check
+const singletonCheck = checkSingletonInstance();
+if (!singletonCheck.isSingleton) {
+    logger.error(`Singleton check failed: ${singletonCheck.error}`);
+    process.exit(1);
+}
+
+logger.info('Singleton instance check passed');
+// ============================================
+// END SINGLETON INSTANCE CHECK
+// ============================================
+
 process.on('uncaughtException', (error: Error) => {
     logger.error('UNCAUGHT EXCEPTION - Process will crash');
     logger.error(error);
+    // Exit with error code to prevent zombie processes
+    process.exit(1);
 });
 
 process.on('unhandledRejection', (reason: any) => {
@@ -102,15 +235,50 @@ initializeMlxAutoConfig();
 // ============================================
 
 // Initialize server
-logger.info(`${getTimestamp()} About to create FastMCP server...`);
+logger.info('About to create FastMCP server...');
+
+function resolveServerMetadata(): { name: string; version: `${number}.${number}.${number}` } {
+    const fallbackName = 'saga';
+    const fallbackVersion: `${number}.${number}.${number}` = '0.0.0';
+    const toSemver = (value?: string): `${number}.${number}.${number}` => {
+        if (typeof value === 'string' && /^\d+\.\d+\.\d+$/.test(value)) {
+            return value as `${number}.${number}.${number}`;
+        }
+        return fallbackVersion;
+    };
+
+    const envVersion = process.env.npm_package_version;
+    if (envVersion) {
+        return { name: fallbackName, version: toSemver(envVersion) };
+    }
+
+    try {
+        const packageJsonPath = path.resolve(process.cwd(), 'package.json');
+        const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8')) as {
+            name?: string;
+            version?: string;
+        };
+
+        const packageName = typeof packageJson.name === 'string' ? packageJson.name : fallbackName;
+        const normalizedName = packageName.includes('/') ? (packageName.split('/').pop() || fallbackName) : packageName;
+        const version = toSemver(packageJson.version);
+
+        return { name: normalizedName, version };
+    } catch (error) {
+        logger.warn(`Failed to resolve package metadata, using fallback server metadata: ${error}`);
+        return { name: fallbackName, version: fallbackVersion };
+    }
+}
+
+const serverMetadata = resolveServerMetadata();
 
 const server = new FastMCP({
-    name: "Documentation Server",
-    version: "1.0.0",
+    name: serverMetadata.name,
+    version: serverMetadata.version,
 });
 
 logger.info('FastMCP server initialized');
-logger.info(`${getTimestamp()} FastMCP server created successfully`);
+logger.info('FastMCP server created successfully');
 
 // Initialize with default embedding provider
 let documentManager: DocumentManager;
@@ -203,7 +371,7 @@ function setupStdioLifecycleGuards(): void {
             return;
         }
         exiting = true;
-        logger.warn(`${getTimestamp()} Stdio lifecycle guard exit: ${reason} (pid=${process.pid}, ppid=${process.ppid})`);
+        logger.warn(`Stdio lifecycle guard exit: ${reason} (pid=${process.pid}, ppid=${process.ppid})`);
         process.exit(code);
     };
 
@@ -891,7 +1059,7 @@ server.addTool({
 
 // Start the server
 const transportConfig = resolveTransportConfig();
-logger.info(`${getTimestamp()} About to start server with ${transportConfig.transportType} transport...`);
+logger.info(`About to start server with ${transportConfig.transportType} transport...`);
 if (transportConfig.transportType === 'httpStream') {
     const { host, port, endpoint } = transportConfig.httpStream;
     logger.info(`HTTP Stream endpoint: http://${host}:${port}${endpoint}`);
@@ -902,4 +1070,4 @@ if (transportConfig.transportType === 'httpStream') {
 
 server.start(transportConfig);
 
-logger.info(`${getTimestamp()} Server started successfully!`);
+logger.info('Server started successfully!');

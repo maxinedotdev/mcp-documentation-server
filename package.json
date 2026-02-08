@@ -1,6 +1,6 @@
 {
   "name": "@maxinedotdev/saga",
-  "version": "1.0.5",
+  "version": "1.1.0",
   "description": "A TypeScript MCP server for document management and semantic search with embeddings, featuring web crawling, multiple AI providers, and intelligent chunking",
   "main": "dist/server.js",
   "type": "module",
@@ -10,7 +10,7 @@
   "homepage": "https://github.com/maxinedotdev/saga#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/maxinedotdev/saga.git"
+    "url": "https://github.com/maxinedotdev/saga"
   },
   "bugs": {
     "url": "https://github.com/maxinedotdev/saga/issues"
@@ -72,32 +72,34 @@
     "@tsconfig/node22": "^22.0.1",
     "@types/fs-extra": "^11.0.4",
     "@types/glob": "^8.1.0",
-    "@types/node": "^25.2.0",
+    "@types/node": "25.2.2",
     "@types/node-cron": "^3.0.11",
     "@vitest/coverage-v8": "^4.0.18",
     "commander": "^14.0.3",
     "shx": "^0.4.0",
     "tsx": "^4.20.3",
     "typescript": "^5.8.3",
-    "vite-tsconfig-paths": "^6.0.5",
+    "vite-tsconfig-paths": "6.1.0",
     "vitest": "^4.0.18"
   },
   "dependencies": {
-    "@lancedb/lancedb": "^0.23.0",
+    "@lancedb/lancedb": "0.24.1",
     "@langchain/core": "^1.1.19",
     "@langchain/textsplitters": "^1.0.1",
     "cheerio": "^1.2.0",
     "dotenv": "^17.2.3",
     "eld": "^2.0.2",
-    "fastmcp": "^3.31.0",
+    "fastmcp": "3.32.0",
     "fs-extra": "^11.3.0",
     "generic-pool": "^3.9.0",
     "ioredis": "^5.3.2",
+    "jose": "5.10.0",
     "node-cron": "^4.2.1",
     "unpdf": "^1.2.1",
     "zod": "^4.3.6"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   }
 }
