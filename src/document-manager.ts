@@ -1043,30 +1043,40 @@ export class DocumentManager {
                         candidateLimit
                     );
                     
-                    // Group by document ID and aggregate scores
-                    const docScoreMap = new Map<string, { score: number; chunks: number }>();
+                    // Group by document ID and aggregate using top chunk scores.
+                    // Averaging across all retrieved chunks can over-reward broad docs.
+                    const docScoreMap = new Map<string, { topScores: number[]; maxScore: number; chunks: number }>();
                     
                     for (const result of vectorResults) {
                         const docId = result.chunk.document_id;
-                        const existing = docScoreMap.get(docId) || { score: 0, chunks: 0 };
+                        const existing = docScoreMap.get(docId) || { topScores: [], maxScore: 0, chunks: 0 };
+                        const score = result.score;
+                        const topScores = [...existing.topScores, score]
+                            .sort((a, b) => b - a)
+                            .slice(0, 3);
                         docScoreMap.set(docId, {
-                            score: existing.score + result.score,
+                            topScores,
+                            maxScore: Math.max(existing.maxScore, score),
                             chunks: existing.chunks + 1
                         });
                     }
                     
-                    // Convert to results with average scores
+                    // Convert to results with blended top-score ranking
                     const similarityThreshold = this.getSimilarityThreshold();
                     
                     candidates = Array.from(docScoreMap.entries())
-                        .filter(([_, data]) => (data.score / data.chunks) >= similarityThreshold)
-                        .map(([docId, data]) => ({
-                            id: docId,
-                            title: '',
-                            score: data.score / data.chunks,
-                            updated_at: '',
-                            chunks_count: data.chunks
-                        }))
+                        .map(([docId, data]) => {
+                            const topAverage = data.topScores.reduce((sum, score) => sum + score, 0) / Math.max(data.topScores.length, 1);
+                            const blendedScore = (topAverage * 0.8) + (data.maxScore * 0.2);
+                            return {
+                                id: docId,
+                                title: '',
+                                score: blendedScore,
+                                updated_at: '',
+                                chunks_count: data.chunks
+                            };
+                        })
+                        .filter((candidate) => candidate.score >= similarityThreshold)
                         .sort((a, b) => b.score - a.score);
                 } catch (error) {
                     logger.warn('Vector search failed, falling back to keyword search:', error);
@@ -1186,6 +1196,25 @@ export class DocumentManager {
                 });
             }
         }
+
+        // Blend lexical title matching with semantic score to stabilize short-query relevance.
+        const queryKeywords = this.extractKeywords(queryText);
+        if (queryKeywords.length > 0) {
+            finalResults.sort((a, b) => {
+                const aMatchRatio = this.getTitleKeywordMatchRatio(a.title, queryKeywords);
+                const bMatchRatio = this.getTitleKeywordMatchRatio(b.title, queryKeywords);
+                const aRankScore = a.score + (aMatchRatio * 0.25);
+                const bRankScore = b.score + (bMatchRatio * 0.25);
+
+                if (bRankScore !== aRankScore) {
+                    return bRankScore - aRankScore;
+                }
+                if (bMatchRatio !== aMatchRatio) {
+                    return bMatchRatio - aMatchRatio;
+                }
+                return b.score - a.score;
+            });
+        }
         
         // Apply pagination
         const paginatedResults = finalResults.slice(offset, offset + limit);
@@ -1221,6 +1250,22 @@ export class DocumentManager {
         }
         
         return result;
+    }
+
+    private getTitleKeywordMatchRatio(title: string | undefined, keywords: string[]): number {
+        if (!title || keywords.length === 0) {
+            return 0;
+        }
+
+        const titleLower = title.toLowerCase();
+        let matches = 0;
+        for (const keyword of keywords) {
+            if (titleLower.includes(keyword)) {
+                matches += 1;
+            }
+        }
+
+        return matches / keywords.length;
     }
 
     private matchesFilters(metadata: Record<string, any> | undefined, filters: MetadataFilter): boolean {
