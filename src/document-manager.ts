@@ -1592,20 +1592,18 @@ export class DocumentManager {
         }
 
         const existingIds = new Set(existing.map(result => result.id));
-        const maxScore = Math.max(...results.map(result => result.score), 1);
         const similarityThreshold = this.getSimilarityThreshold();
         const requiredKeywordMatches = keywords.length <= 2 ? keywords.length : Math.ceil(keywords.length / 2);
+        const eligibleResults = results.filter(result => {
+            if (existingIds.has(result.document_id)) {
+                return false;
+            }
+            return result.matched_keywords >= requiredKeywordMatches;
+        });
+        const maxScore = Math.max(...eligibleResults.map(result => result.score), 1);
         const keywordResults: DocumentDiscoveryResult[] = [];
 
-        for (const result of results) {
-            if (existingIds.has(result.document_id)) {
-                continue;
-            }
-
-            if (result.matched_keywords < requiredKeywordMatches) {
-                continue;
-            }
-
+        for (const result of eligibleResults) {
             const normalizedScore = result.score / maxScore;
             if (normalizedScore < similarityThreshold) {
                 continue;
