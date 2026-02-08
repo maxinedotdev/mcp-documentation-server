@@ -1457,7 +1457,7 @@ export class LanceDBV1 implements ValidationDatabase {
      * @param keywords - Array of keywords to search for
      * @returns Array of document IDs with scores
      */
-    async queryByKeywords(keywords: string[]): Promise<Array<{ document_id: string; score: number }>> {
+    async queryByKeywords(keywords: string[]): Promise<Array<{ document_id: string; score: number; matched_keywords: number }>> {
         if (!this.initialized) {
             throw new Error('Database not initialized');
         }
@@ -1469,18 +1469,24 @@ export class LanceDBV1 implements ValidationDatabase {
                 .where(`keyword IN (${keywordConditions})`)
                 .toArray();
             
-            // Aggregate scores by document ID
-            const documentScores = new Map<string, number>();
+            // Aggregate scores by document ID and track how many distinct query keywords matched.
+            const documentScores = new Map<string, { score: number; matchedKeywords: Set<string> }>();
             
             for (const result of results) {
-                const currentScore = documentScores.get(result.document_id) || 0;
-                documentScores.set(result.document_id, currentScore + result.frequency);
+                const current = documentScores.get(result.document_id) || { score: 0, matchedKeywords: new Set<string>() };
+                current.score += result.frequency;
+                current.matchedKeywords.add(String(result.keyword).toLowerCase());
+                documentScores.set(result.document_id, current);
             }
             
             // Convert to array and sort by score
             return Array.from(documentScores.entries())
-                .map(([document_id, score]) => ({ document_id, score }))
-                .sort((a, b) => b.score - a.score);
+                .map(([document_id, data]) => ({
+                    document_id,
+                    score: data.score,
+                    matched_keywords: data.matchedKeywords.size,
+                }))
+                .sort((a, b) => b.score - a.score || b.matched_keywords - a.matched_keywords);
         } catch (error) {
             logger.error('Error querying by keywords:', error);
             throw new Error(`Keyword query failed: ${error}`);

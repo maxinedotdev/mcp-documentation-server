@@ -298,7 +298,21 @@ export function getLogger(prefix: string): {
     warn: (...args: any[]) => void;
     error: (...args: any[]) => void;
 } {
-    const log = (level: string, ...args: any[]) => {
+    type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+    const levelOrder: Record<LogLevel, number> = {
+        debug: 10,
+        info: 20,
+        warn: 30,
+        error: 40
+    };
+    const configuredLevel = (process.env.MCP_LOG_LEVEL || 'info').toLowerCase();
+    const minLevel: LogLevel = (configuredLevel in levelOrder ? configuredLevel : 'info') as LogLevel;
+
+    const log = (level: LogLevel, ...args: any[]) => {
+        if (levelOrder[level] < levelOrder[minLevel]) {
+            return;
+        }
+
         const timestamp = new Date().toISOString();
         const message = `[${timestamp}] [${prefix}] [${level.toUpperCase()}] ${args.map(arg =>
             typeof arg === 'object' ? JSON.stringify(arg) : String(arg)

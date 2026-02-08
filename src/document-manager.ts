@@ -37,6 +37,7 @@ export class DocumentManager {
     private reranker: Reranker | null = null;
     private rerankingEnabled: boolean = false;
     private rerankerInitPromise: Promise<void> | null = null;
+    private throttledWarnState = new Map<string, { lastLoggedAt: number; suppressed: number }>();
 
     constructor(embeddingProvider: EmbeddingProvider, vectorDatabase?: LanceDBV1) {
         // Always use default paths
@@ -127,6 +128,24 @@ export class DocumentManager {
         } else {
             logger.warn('Vector DB disabled; vector features are unavailable.');
         }
+    }
+
+    private logWarnThrottled(key: string, message: string, intervalMs: number = 60000): void {
+        const now = Date.now();
+        const state = this.throttledWarnState.get(key);
+
+        if (!state || now - state.lastLoggedAt >= intervalMs) {
+            if (state && state.suppressed > 0) {
+                logger.warn(`${message} (suppressed ${state.suppressed} similar warnings in last ${Math.round(intervalMs / 1000)}s)`);
+            } else {
+                logger.warn(message);
+            }
+            this.throttledWarnState.set(key, { lastLoggedAt: now, suppressed: 0 });
+            return;
+        }
+
+        state.suppressed += 1;
+        this.throttledWarnState.set(key, state);
     }
 
     /**
@@ -497,8 +516,29 @@ export class DocumentManager {
 
     private getSimilarityThreshold(): number {
         const raw = process.env.MCP_SIMILARITY_THRESHOLD;
-        const parsed = raw ? Number.parseFloat(raw) : Number.NaN;
-        return Number.isFinite(parsed) ? parsed : 0.0;
+        const defaultThreshold = 0.5;
+
+        if (!raw || raw.trim().length === 0) {
+            return defaultThreshold;
+        }
+
+        const parsed = Number.parseFloat(raw);
+        if (!Number.isFinite(parsed)) {
+            this.logWarnThrottled(
+                'invalid-similarity-threshold',
+                `Invalid MCP_SIMILARITY_THRESHOLD "${raw}", using default ${defaultThreshold}`
+            );
+            return defaultThreshold;
+        }
+
+        if (parsed < 0 || parsed > 1) {
+            this.logWarnThrottled(
+                'out-of-range-similarity-threshold',
+                `MCP_SIMILARITY_THRESHOLD should be between 0.0 and 1.0, clamping value ${parsed}`
+            );
+        }
+
+        return Math.max(0, Math.min(1, parsed));
     }
 
     private calculateContentHash(content: string): string {
@@ -1038,11 +1078,27 @@ export class DocumentManager {
             logger.warn('Vector DB not enabled, skipping vector search');
         }
         
-        // Fall back to keyword search if vector search returned insufficient results
-        const minVectorResults = Math.max(1, Math.floor(limit / 2));
-        if (candidates.length < minVectorResults && this.useIndexing && this.vectorDatabase) {
+        // Always merge keyword results when indexing is enabled so exact token matches
+        // can recover from broad semantic matches on short queries.
+        if (this.useIndexing && this.vectorDatabase) {
             const keywordResults = await this.keywordSearchFallback(queryText, candidates);
-            candidates = [...candidates, ...keywordResults];
+
+            if (keywordResults.length > 0) {
+                const merged = new Map<string, DocumentDiscoveryResult>();
+
+                for (const candidate of candidates) {
+                    merged.set(candidate.id, candidate);
+                }
+
+                for (const keywordResult of keywordResults) {
+                    const existing = merged.get(keywordResult.id);
+                    if (!existing || keywordResult.score > existing.score) {
+                        merged.set(keywordResult.id, keywordResult);
+                    }
+                }
+
+                candidates = Array.from(merged.values()).sort((a, b) => b.score - a.score);
+            }
         }
         
         // Stage 2: Rerank if enabled
@@ -1053,7 +1109,7 @@ export class DocumentManager {
             }
 
             if (!this.reranker || !this.reranker.isReady()) {
-                logger.warn('Reranker is not ready, using vector-only results');
+                this.logWarnThrottled('reranker-not-ready', 'Reranker is not ready, using vector-only results');
                 results = candidates;
             } else {
                 try {
@@ -1074,7 +1130,8 @@ export class DocumentManager {
                     // Map reranked indices to results
                     results = this.mapRerankedResults(reranked, candidates);
                 } catch (error) {
-                    logger.warn('Reranking failed, using vector-only results:', error);
+                    const message = error instanceof Error ? error.message : String(error);
+                    this.logWarnThrottled('reranker-failed', `Reranking failed, using vector-only results: ${message}`);
                     // Fallback to vector-only results if reranking fails
                     results = candidates;
                 }
@@ -1536,10 +1593,21 @@ export class DocumentManager {
 
         const existingIds = new Set(existing.map(result => result.id));
         const maxScore = Math.max(...results.map(result => result.score), 1);
+        const similarityThreshold = this.getSimilarityThreshold();
+        const requiredKeywordMatches = keywords.length <= 2 ? keywords.length : Math.ceil(keywords.length / 2);
         const keywordResults: DocumentDiscoveryResult[] = [];
 
         for (const result of results) {
             if (existingIds.has(result.document_id)) {
+                continue;
+            }
+
+            if (result.matched_keywords < requiredKeywordMatches) {
+                continue;
+            }
+
+            const normalizedScore = result.score / maxScore;
+            if (normalizedScore < similarityThreshold) {
                 continue;
             }
 
@@ -1551,7 +1619,7 @@ export class DocumentManager {
             keywordResults.push({
                 id: document.id,
                 title: document.title,
-                score: result.score / maxScore,
+                score: normalizedScore,
                 updated_at: document.updated_at,
                 chunks_count: document.chunks_count,
             });

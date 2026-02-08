@@ -413,7 +413,7 @@ Environment variables:
 | `MCP_AI_MODEL` | LLM model name | Provider default |
 | `MCP_AI_API_KEY` | API key for remote providers | - |
 | `MCP_TAG_GENERATION_ENABLED` | Auto-generate tags with AI | `false` |
-| `MCP_SIMILARITY_THRESHOLD` | Min similarity score (0.0-1.0) | `0.0` |
+| `MCP_SIMILARITY_THRESHOLD` | Min similarity score (0.0-1.0) | `0.5` |
 
 ### Reranking Configuration
 
